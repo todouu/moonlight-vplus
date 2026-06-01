@@ -895,7 +895,7 @@ public class DigitalStick extends Element {
 
     private void updateBoost(float yForward) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) return;
-        boolean shouldBoost = (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

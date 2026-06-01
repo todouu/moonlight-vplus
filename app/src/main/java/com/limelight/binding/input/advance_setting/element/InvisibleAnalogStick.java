@@ -778,7 +778,7 @@ public class InvisibleAnalogStick extends Element {
         if (boostThreshold <= 0 || boostKeySendHandler == null) {
             return; // 功能关闭
         }
-        boolean shouldBoost = (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);
