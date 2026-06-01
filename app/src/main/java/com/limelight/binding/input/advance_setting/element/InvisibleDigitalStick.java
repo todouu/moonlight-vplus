@@ -19,6 +19,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import com.limelight.Game;
+import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
 import com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHelper;
@@ -26,6 +27,10 @@ import com.limelight.binding.input.advance_setting.superpage.ElementEditText;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
 import com.limelight.utils.ColorPickerDialog;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.Map;
 
@@ -178,6 +183,12 @@ public class InvisibleDigitalStick extends Element {
     private boolean leftIsPressed = false;
     private boolean rightIsPressed = false;
 
+    // --- 前推冲刺（前推到阈值时自动触发冲刺键 + 锁定前进按键） ---
+    private int boostThreshold = 0;        // 触发阈值百分比 0-100，0=关闭
+    private String boostKey = "k59";       // 按键摇杆默认冲刺键为左Shift (k59)
+    private ElementController.SendEventHandler boostKeySendHandler;
+    private boolean boostActive = false;
+
     private static double getMovementRadius(float x, float y) {
         return Math.sqrt(x * x + y * y);
     }
@@ -262,9 +273,29 @@ public class InvisibleDigitalStick extends Element {
         leftValueSendHandler = controller.getSendEventHandler(leftValue);
         rightValueSendHandler = controller.getSendEventHandler(rightValue);
 
+        // 读取前推冲刺配置
+        Object extraAttrObj = attributesMap.get(COLUMN_STRING_EXTRA_ATTRIBUTES);
+        if (extraAttrObj instanceof String && !((String) extraAttrObj).isEmpty()) {
+            try {
+                JsonObject extraAttrs = JsonParser.parseString((String) extraAttrObj).getAsJsonObject();
+                if (extraAttrs.has("boostThreshold")) {
+                    boostThreshold = extraAttrs.get("boostThreshold").getAsInt();
+                }
+                if (extraAttrs.has("boostKey")) {
+                    boostKey = extraAttrs.get("boostKey").getAsString();
+                }
+            } catch (Exception e) {
+                LimeLog.warning("InvisibleDigitalStick: failed to parse extra_attributes: " + e);
+            }
+        }
+        boostKeySendHandler = controller.getSendEventHandler(boostKey);
+
         listener = new InvisibleDigitalStickListener() {
             @Override
             public void onMovement(float x, float y) {
+                // 前推冲刺判定
+                updateBoost(y);
+
                 if (x < -deadZoneRadius * 0.01 && !leftIsPressed) {
                     leftValueSendHandler.sendEvent(true);
                     leftIsPressed = true;
@@ -286,12 +317,20 @@ public class InvisibleDigitalStick extends Element {
                     downValueSendHandler.sendEvent(false);
                     downIsPressed = false;
                 }
-                if (y > deadZoneRadius * 0.01 && !upIsPressed) {
-                    upValueSendHandler.sendEvent(true);
-                    upIsPressed = true;
-                } else if (y < deadZoneRadius * 0.01 && upIsPressed) {
-                    upValueSendHandler.sendEvent(false);
-                    upIsPressed = false;
+                // 前进键：冲刺激活时锁定按下，不会被松开
+                if (boostActive) {
+                    if (!upIsPressed) {
+                        upValueSendHandler.sendEvent(true);
+                        upIsPressed = true;
+                    }
+                } else {
+                    if (y > deadZoneRadius * 0.01 && !upIsPressed) {
+                        upValueSendHandler.sendEvent(true);
+                        upIsPressed = true;
+                    } else if (y < deadZoneRadius * 0.01 && upIsPressed) {
+                        upValueSendHandler.sendEvent(false);
+                        upIsPressed = false;
+                    }
                 }
             }
 
@@ -361,6 +400,8 @@ public class InvisibleDigitalStick extends Element {
         ElementEditText backgroundColorEditText = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_background_color);
         Button copyButton = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_copy);
         Button deleteButton = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_delete);
+        NumberSeekbar boostThresholdSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_boost_threshold);
+        TextView boostKeyTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_boost_key);
 
 
         middleValueTextView.setText(pageDeviceController.getKeyNameByValue(middleValue));
@@ -441,6 +482,43 @@ public class InvisibleDigitalStick extends Element {
                     }
                 };
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
+            }
+        });
+
+        // 前推冲刺 - 冲刺键选择
+        boostKeyTextView.setText(pageDeviceController.getKeyNameByValue(boostKey));
+        boostKeyTextView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                PageDeviceController.DeviceCallBack deviceCallBack = new PageDeviceController.DeviceCallBack() {
+                    @Override
+                    public void OnKeyClick(TextView key) {
+                        ((TextView) v).setText(key.getText());
+                        setBoostKey(key.getTag().toString());
+                        save();
+                    }
+                };
+                pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
+            }
+        });
+
+        // 前推冲刺 - 触发阈值
+        boostThresholdSeekbar.setProgressMax(100);
+        boostThresholdSeekbar.setProgressMin(0);
+        boostThresholdSeekbar.setValueWithNoCallBack(boostThreshold);
+        boostThresholdSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                setBoostThreshold(progress);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                save();
             }
         });
 
@@ -625,6 +703,7 @@ public class InvisibleDigitalStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
                 elementController.addElement(contentValues);
             }
         });
@@ -660,6 +739,7 @@ public class InvisibleDigitalStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -838,6 +918,9 @@ public class InvisibleDigitalStick extends Element {
             stick_state = InvisibleDigitalStick.STICK_STATE.NO_MOVEMENT;
             notifyOnRevoke();
 
+            // 松开摇杆时同时松开冲刺键
+            releaseBoost();
+
             // not longer pressed reset analog stick
             notifyOnMovement(0, 0);
         }
@@ -870,6 +953,49 @@ public class InvisibleDigitalStick extends Element {
     public void setElementRightValue(String rightValue) {
         this.rightValue = rightValue;
         rightValueSendHandler = elementController.getSendEventHandler(rightValue);
+    }
+
+    public void setBoostThreshold(int boostThreshold) {
+        this.boostThreshold = boostThreshold;
+    }
+
+    public void setBoostKey(String boostKey) {
+        this.boostKey = boostKey;
+        this.boostKeySendHandler = elementController.getSendEventHandler(boostKey);
+    }
+
+    /**
+     * 前推冲刺判定：前进量(0~1)达到阈值时按下冲刺键(Shift)。
+     */
+    private void updateBoost(float yForward) {
+        if (boostThreshold <= 0 || boostKeySendHandler == null) {
+            return;
+        }
+        boolean shouldBoost = (yForward * 100f) >= boostThreshold;
+        if (shouldBoost && !boostActive) {
+            boostActive = true;
+            boostKeySendHandler.sendEvent(true);
+        } else if (!shouldBoost && boostActive) {
+            boostActive = false;
+            boostKeySendHandler.sendEvent(false);
+        }
+    }
+
+    /**
+     * 松开冲刺键。
+     */
+    private void releaseBoost() {
+        if (boostActive && boostKeySendHandler != null) {
+            boostKeySendHandler.sendEvent(false);
+        }
+        boostActive = false;
+    }
+
+    private String buildExtraAttributesJson() {
+        JsonObject extraAttrs = new JsonObject();
+        extraAttrs.addProperty("boostThreshold", boostThreshold);
+        extraAttrs.addProperty("boostKey", boostKey);
+        return new Gson().toJson(extraAttrs);
     }
 
     public void setElementRadius(int radius) {

@@ -1114,6 +1114,9 @@
     <string name="page_section_appearance_settings">🎨 Appearance Settings</string>
     <string name="page_section_stick_style">🕹️ Stick Style</string>
     <string name="page_section_operations">🔧 Operations</string>
+    <string name="page_section_boost_sprint">🚀 Forward Boost Sprint</string>
+    <string name="boost_threshold_label">Trigger threshold (0=off)</string>
+    <string name="boost_key_label">Sprint key</string>
     <string name="page_section_child_management">🔧 Child Management</string>
     <string name="page_section_dpad_config">🎮 D-Pad Config</string>
     <string name="page_section_dpad_settings">🎮 D-Pad Settings</string>

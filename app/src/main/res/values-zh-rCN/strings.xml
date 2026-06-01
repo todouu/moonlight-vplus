@@ -1060,6 +1060,9 @@
     <string name="page_section_appearance_settings">🎨 外观设置</string>
     <string name="page_section_stick_style">🕹️ 摇杆样式</string>
     <string name="page_section_operations">🔧 操作</string>
+    <string name="page_section_boost_sprint">🚀 前推冲刺</string>
+    <string name="boost_threshold_label">触发阈值 (0=关闭)</string>
+    <string name="boost_key_label">冲刺键</string>
     <string name="page_section_child_management">🔧 子元素管理</string>
     <string name="page_section_dpad_config">🎮 方向键配置</string>
     <string name="page_section_dpad_settings">🎮 方向键设置</string>

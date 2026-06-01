@@ -21,6 +21,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import com.limelight.Game;
+import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
 import com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHelper;
@@ -28,6 +29,10 @@ import com.limelight.binding.input.advance_setting.superpage.ElementEditText;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
 import com.limelight.utils.ColorPickerDialog;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -173,6 +178,12 @@ public class InvisibleAnalogStick extends Element {
     private List<InvisibleAnalogStickListener> listeners = new ArrayList<>();
     private long timeLastClick = 0;
 
+    // --- 前推冲刺（往前推到阈值时自动触发冲刺键 + 锁定前进最大） ---
+    private int boostThreshold = 0;        // 触发阈值，前进量百分比 0-100，0 表示关闭
+    private String boostKey = "g64";       // 冲刺键，手柄摇杆默认 L3 (g64)
+    private ElementController.SendEventHandler boostKeySendHandler;
+    private boolean boostActive = false;
+
     private static double getMovementRadius(float x, float y) {
         return Math.sqrt(x * x + y * y);
     }
@@ -251,6 +262,23 @@ public class InvisibleAnalogStick extends Element {
         valueSendHandler = controller.getSendEventHandler(value);
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
 
+        // 读取前推冲刺配置（存于 extra_attributes JSON）
+        Object extraAttrObj = attributesMap.get(COLUMN_STRING_EXTRA_ATTRIBUTES);
+        if (extraAttrObj instanceof String && !((String) extraAttrObj).isEmpty()) {
+            try {
+                JsonObject extraAttrs = JsonParser.parseString((String) extraAttrObj).getAsJsonObject();
+                if (extraAttrs.has("boostThreshold")) {
+                    boostThreshold = extraAttrs.get("boostThreshold").getAsInt();
+                }
+                if (extraAttrs.has("boostKey")) {
+                    boostKey = extraAttrs.get("boostKey").getAsString();
+                }
+            } catch (Exception e) {
+                LimeLog.warning("InvisibleAnalogStick: failed to parse extra_attributes: " + e);
+            }
+        }
+        boostKeySendHandler = controller.getSendEventHandler(boostKey);
+
         listener = new InvisibleAnalogStickListener() {
             @Override
             public void onMovement(float x, float y) {
@@ -320,6 +348,8 @@ public class InvisibleAnalogStick extends Element {
         ElementEditText backgroundColorEditText = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_background_color);
         Button copyButton = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_copy);
         Button deleteButton = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_delete);
+        NumberSeekbar boostThresholdSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_boost_threshold);
+        TextView boostKeyTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_boost_key);
 
 
         RadioButton radioButton = valueRadioGroup.findViewWithTag(value);
@@ -346,6 +376,43 @@ public class InvisibleAnalogStick extends Element {
                     }
                 };
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
+            }
+        });
+
+        // 前推冲刺 - 冲刺键选择
+        boostKeyTextView.setText(pageDeviceController.getKeyNameByValue(boostKey));
+        boostKeyTextView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                PageDeviceController.DeviceCallBack deviceCallBack = new PageDeviceController.DeviceCallBack() {
+                    @Override
+                    public void OnKeyClick(TextView key) {
+                        ((TextView) v).setText(key.getText());
+                        setBoostKey(key.getTag().toString());
+                        save();
+                    }
+                };
+                pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
+            }
+        });
+
+        // 前推冲刺 - 触发阈值
+        boostThresholdSeekbar.setProgressMax(100);
+        boostThresholdSeekbar.setProgressMin(0);
+        boostThresholdSeekbar.setValueWithNoCallBack(boostThreshold);
+        boostThresholdSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                setBoostThreshold(progress);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                save();
             }
         });
 
@@ -526,6 +593,7 @@ public class InvisibleAnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
                 elementController.addElement(contentValues);
             }
         });
@@ -558,8 +626,19 @@ public class InvisibleAnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
         elementController.updateElement(elementId, contentValues);
 
+    }
+
+    /**
+     * 把前推冲刺设置打包成 extra_attributes 的 JSON 字符串。
+     */
+    private String buildExtraAttributesJson() {
+        JsonObject extraAttrs = new JsonObject();
+        extraAttrs.addProperty("boostThreshold", boostThreshold);
+        extraAttrs.addProperty("boostKey", boostKey);
+        return new Gson().toJson(extraAttrs);
     }
 
     @Override
@@ -667,8 +746,44 @@ public class InvisibleAnalogStick extends Element {
 
         //  trigger move event if state active
         if (stick_state == InvisibleAnalogStick.STICK_STATE.MOVED_ACTIVE) {
-            notifyOnMovement(-correlated_x / complete, correlated_y / complete);
+            float xOut = -correlated_x / complete;
+            float yOut = correlated_y / complete;   // 前进方向为正
+            // 前推冲刺：前进量超过阈值则按下冲刺键(L3)，并把前进锁定到最大
+            updateBoost(yOut);
+            if (boostActive) {
+                yOut = 1.0f; // L 前进最大
+            }
+            notifyOnMovement(xOut, yOut);
         }
+    }
+
+    /**
+     * 前推冲刺判定：当前进量(0-1)达到阈值时按下冲刺键，低于阈值时松开。
+     *
+     * @param yForward 前进分量，范围约 0..1（向前为正）
+     */
+    private void updateBoost(float yForward) {
+        if (boostThreshold <= 0 || boostKeySendHandler == null) {
+            return; // 功能关闭
+        }
+        boolean shouldBoost = (yForward * 100f) >= boostThreshold;
+        if (shouldBoost && !boostActive) {
+            boostActive = true;
+            boostKeySendHandler.sendEvent(true);
+        } else if (!shouldBoost && boostActive) {
+            boostActive = false;
+            boostKeySendHandler.sendEvent(false);
+        }
+    }
+
+    /**
+     * 松开冲刺键（抬手或松开摇杆时调用）。
+     */
+    private void releaseBoost() {
+        if (boostActive && boostKeySendHandler != null) {
+            boostKeySendHandler.sendEvent(false);
+        }
+        boostActive = false;
     }
 
     @Override
@@ -736,6 +851,9 @@ public class InvisibleAnalogStick extends Element {
             stick_state = InvisibleAnalogStick.STICK_STATE.NO_MOVEMENT;
             notifyOnRevoke();
 
+            // 松开摇杆时同时松开冲刺键
+            releaseBoost();
+
             // not longer pressed reset analog stick
             notifyOnMovement(0, 0);
         }
@@ -753,6 +871,15 @@ public class InvisibleAnalogStick extends Element {
     public void setElementMiddleValue(String middleValue) {
         this.middleValue = middleValue;
         middleValueSendHandler = elementController.getSendEventHandler(middleValue);
+    }
+
+    public void setBoostThreshold(int boostThreshold) {
+        this.boostThreshold = boostThreshold;
+    }
+
+    public void setBoostKey(String boostKey) {
+        this.boostKey = boostKey;
+        this.boostKeySendHandler = elementController.getSendEventHandler(boostKey);
     }
 
     public void setElementRadius(int radius) {

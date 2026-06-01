@@ -23,6 +23,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 import com.limelight.Game;
+import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
 import com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHelper;
@@ -30,6 +31,10 @@ import com.limelight.binding.input.advance_setting.superpage.ElementEditText;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
 import com.limelight.utils.ColorPickerDialog;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.Map;
 
@@ -176,6 +181,12 @@ public class AnalogStick extends Element {
     private AnalogStickListener listener;
     private long timeLastClick = 0;
 
+    // --- 前推冲刺 ---
+    private int boostThreshold = 0;
+    private String boostKey = "g64";  // 手柄摇杆默认 L3
+    private ElementController.SendEventHandler boostKeySendHandler;
+    private boolean boostActive = false;
+
     private static double getMovementRadius(float x, float y) {
         return Math.sqrt(x * x + y * y);
     }
@@ -267,6 +278,23 @@ public class AnalogStick extends Element {
         radius_analog_stick = getPercent(radius, 20);
 
         valueSendHandler = controller.getSendEventHandler(value);
+
+        // 读取前推冲刺配置
+        Object extraAttrObj = attributesMap.get(COLUMN_STRING_EXTRA_ATTRIBUTES);
+        if (extraAttrObj instanceof String && !((String) extraAttrObj).isEmpty()) {
+            try {
+                JsonObject extraAttrs = JsonParser.parseString((String) extraAttrObj).getAsJsonObject();
+                if (extraAttrs.has("boostThreshold")) {
+                    boostThreshold = extraAttrs.get("boostThreshold").getAsInt();
+                }
+                if (extraAttrs.has("boostKey")) {
+                    boostKey = extraAttrs.get("boostKey").getAsString();
+                }
+            } catch (Exception e) {
+                LimeLog.warning("AnalogStick: failed to parse extra_attributes: " + e);
+            }
+        }
+        boostKeySendHandler = controller.getSendEventHandler(boostKey);
 
         listener = new AnalogStickListener() {
             @Override
@@ -383,8 +411,33 @@ public class AnalogStick extends Element {
 
         //  trigger move event if state active
         if (stick_state == AnalogStick.STICK_STATE.MOVED_ACTIVE) {
-            notifyOnMovement(-correlated_x / complete, correlated_y / complete);
+            float xOut = -correlated_x / complete;
+            float yOut = correlated_y / complete;
+            updateBoost(yOut);
+            if (boostActive) {
+                yOut = 1.0f;
+            }
+            notifyOnMovement(xOut, yOut);
         }
+    }
+
+    private void updateBoost(float yForward) {
+        if (boostThreshold <= 0 || boostKeySendHandler == null) return;
+        boolean shouldBoost = (yForward * 100f) >= boostThreshold;
+        if (shouldBoost && !boostActive) {
+            boostActive = true;
+            boostKeySendHandler.sendEvent(true);
+        } else if (!shouldBoost && boostActive) {
+            boostActive = false;
+            boostKeySendHandler.sendEvent(false);
+        }
+    }
+
+    private void releaseBoost() {
+        if (boostActive && boostKeySendHandler != null) {
+            boostKeySendHandler.sendEvent(false);
+        }
+        boostActive = false;
     }
 
     @Override
@@ -460,6 +513,8 @@ public class AnalogStick extends Element {
             stick_state = AnalogStick.STICK_STATE.NO_MOVEMENT;
             notifyOnRevoke();
 
+            releaseBoost();
+
             // not longer pressed reset analog stick
             notifyOnMovement(0, 0);
         }
@@ -490,6 +545,8 @@ public class AnalogStick extends Element {
         ElementEditText backgroundColorEditText = analogStickPage.findViewById(R.id.page_analog_stick_background_color);
         Button copyButton = analogStickPage.findViewById(R.id.page_analog_stick_copy);
         Button deleteButton = analogStickPage.findViewById(R.id.page_analog_stick_delete);
+        NumberSeekbar boostThresholdSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_boost_threshold);
+        TextView boostKeyTextView = analogStickPage.findViewById(R.id.page_analog_stick_boost_key);
 
         RadioButton radioButton = modeRadioGroup.findViewWithTag(value);
         radioButton.setChecked(true);
@@ -522,6 +579,43 @@ public class AnalogStick extends Element {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                 moveMode = isChecked ? 1 : 0;
+                save();
+            }
+        });
+
+        // 前推冲刺 - 冲刺键选择
+        boostKeyTextView.setText(pageDeviceController.getKeyNameByValue(boostKey));
+        boostKeyTextView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                PageDeviceController.DeviceCallBack deviceCallBack = new PageDeviceController.DeviceCallBack() {
+                    @Override
+                    public void OnKeyClick(TextView key) {
+                        ((TextView) v).setText(key.getText());
+                        setBoostKey(key.getTag().toString());
+                        save();
+                    }
+                };
+                pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
+            }
+        });
+
+        // 前推冲刺 - 触发阈值
+        boostThresholdSeekbar.setProgressMax(100);
+        boostThresholdSeekbar.setProgressMin(0);
+        boostThresholdSeekbar.setValueWithNoCallBack(boostThreshold);
+        boostThresholdSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                setBoostThreshold(progress);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
                 save();
             }
         });
@@ -661,6 +755,7 @@ public class AnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
                 contentValues.put(COLUMN_INT_ELEMENT_MODE, moveMode);
+                contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
                 elementController.addElement(contentValues);
             }
         });
@@ -694,6 +789,7 @@ public class AnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
         contentValues.put(COLUMN_INT_ELEMENT_MODE, moveMode);
+        contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, buildExtraAttributesJson());
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -715,6 +811,22 @@ public class AnalogStick extends Element {
     public void setElementMiddleValue(String middleValue) {
         this.middleValue = middleValue;
         middleValueSendHandler = elementController.getSendEventHandler(middleValue);
+    }
+
+    public void setBoostThreshold(int boostThreshold) {
+        this.boostThreshold = boostThreshold;
+    }
+
+    public void setBoostKey(String boostKey) {
+        this.boostKey = boostKey;
+        this.boostKeySendHandler = elementController.getSendEventHandler(boostKey);
+    }
+
+    private String buildExtraAttributesJson() {
+        JsonObject extraAttrs = new JsonObject();
+        extraAttrs.addProperty("boostThreshold", boostThreshold);
+        extraAttrs.addProperty("boostKey", boostKey);
+        return new Gson().toJson(extraAttrs);
     }
 
     public void setElementRadius(int radius) {
