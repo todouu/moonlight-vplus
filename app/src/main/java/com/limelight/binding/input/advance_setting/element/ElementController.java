@@ -66,6 +66,7 @@ public class ElementController {
     private static final String SPECIAL_KEY_PAN_ZOOM_MODE = "PZM";
     private static final String SPECIAL_KEY_OPEN_GAME_MENU = "OGM";
     private static final String SPECIAL_KEY_EDIT_MODE_SWITCH = "EMS"; // 编辑模式
+    private static final String SPECIAL_KEY_MOUSE_FREE_MODE = "MFM"; // 鼠标自由模式
 
 
 
@@ -120,6 +121,10 @@ public class ElementController {
     private long currentConfigId;
     private boolean gameVibrator = false;
     private boolean buttonVibrator = false;
+
+    // 鼠标自由模式状态
+    private boolean mouseFreeModeActive = false;
+    private List<Long> mouseFreeModeHideElementIds = new ArrayList<>();
 
     // 滚轮按住事件管理
     private Map<Integer, Runnable> mouseScrollRunnableMap = new HashMap<>();
@@ -357,6 +362,9 @@ public class ElementController {
             // 调用我们将在 GroupButton 类中添加的新方法
             gb.linkChildElements(elements);
         }
+
+        // 初始化鼠标自由模式的隐藏元素列表
+        initMouseFreeModeFromElements();
     }
 
     protected Element addElement(ContentValues contentValues) {
@@ -636,6 +644,56 @@ public class ElementController {
     //其他辅助方法----------------------------------
     public List<Element> getElements() {
         return elements;
+    }
+
+    public void setMouseFreeModeHideElements(List<Long> elementIds) {
+        this.mouseFreeModeHideElementIds = elementIds != null ? elementIds : new ArrayList<>();
+    }
+
+    public List<Long> getMouseFreeModeHideElementIds() {
+        return mouseFreeModeHideElementIds;
+    }
+
+    public boolean isMouseFreeModeActive() {
+        return mouseFreeModeActive;
+    }
+
+    /**
+     * 初始化鼠标自由模式的隐藏元素列表。
+     * 遍历所有元素，找到 value 为 "MFM" 的 DigitalSwitchButton，
+     * 从其 extra_attributes 中读取 mouseFreeModeHideIds。
+     */
+    public void initMouseFreeModeFromElements() {
+        mouseFreeModeActive = false;
+        mouseFreeModeHideElementIds.clear();
+        for (Element element : elements) {
+            String extraAttrs = getElementExtraAttributes(element.elementId);
+            if (extraAttrs != null && !extraAttrs.isEmpty()) {
+                try {
+                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(extraAttrs).getAsJsonObject();
+                    if (json.has("mouseFreeModeHideIds")) {
+                        String idsStr = json.get("mouseFreeModeHideIds").getAsString();
+                        if (!idsStr.isEmpty()) {
+                            String[] idArray = idsStr.split(",");
+                            for (String id : idArray) {
+                                try {
+                                    mouseFreeModeHideElementIds.add(Long.parseLong(id.trim()));
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
+                        break; // 只需要一个 MFM 按键的配置
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private String getElementExtraAttributes(long elementId) {
+        Map<String, Object> attrs = controllerManager.getSuperConfigDatabaseHelper().queryAllElementAttributes(currentConfigId, elementId);
+        if (attrs != null && attrs.containsKey(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES)) {
+            return (String) attrs.get(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES);
+        }
+        return null;
     }
 
     /**
@@ -1074,6 +1132,46 @@ public class ElementController {
                 @Override
                 public void sendEvent(int analog1, int analog2) {
 
+                }
+            };
+        } else if (key.equals(SPECIAL_KEY_MOUSE_FREE_MODE)) {
+            return new SendEventHandler() {
+                @Override
+                public void sendEvent(boolean down) {
+                    if (down) {
+                        mouseFreeModeActive = !mouseFreeModeActive;
+                        if (mouseFreeModeActive) {
+                            // 进入鼠标自由模式: 多点触控 + 显示鼠标指针 + 隐藏选中按键
+                            controllerManager.getTouchController().setTouchMode(false);
+                            controllerManager.getTouchController().setEnhancedTouch(true);
+                            game.enableNativeMousePointer(true);
+                            // 隐藏用户选择的按键
+                            for (Element element : elements) {
+                                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                                    element.setVisibility(View.GONE);
+                                }
+                            }
+                            showToast("鼠标自由模式");
+                        } else {
+                            // 退出鼠标自由模式: 恢复之前的模式 + 隐藏鼠标指针 + 显示按键
+                            boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
+                            boolean enhancedTouch = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false)));
+                            controllerManager.getTouchController().setTouchMode(touchMode);
+                            controllerManager.getTouchController().setEnhancedTouch(enhancedTouch);
+                            game.enableNativeMousePointer(false);
+                            // 显示之前隐藏的按键
+                            for (Element element : elements) {
+                                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                                    element.setVisibility(View.VISIBLE);
+                                }
+                            }
+                            showToast("鼠标锁定模式");
+                        }
+                    }
+                }
+
+                @Override
+                public void sendEvent(int analog1, int analog2) {
                 }
             };
         }

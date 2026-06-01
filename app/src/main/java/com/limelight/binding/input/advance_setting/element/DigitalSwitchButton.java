@@ -17,7 +17,11 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.limelight.Game;
 import com.limelight.R;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
@@ -25,8 +29,11 @@ import com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHel
 import com.limelight.binding.input.advance_setting.superpage.ElementEditText;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
+import com.limelight.binding.input.advance_setting.superpage.SuperPagesController;
 import com.limelight.utils.ColorPickerDialog;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -77,6 +84,9 @@ public class DigitalSwitchButton extends Element {
     private SuperPageLayout digitalSwitchButtonPage;
     private NumberSeekbar centralXNumberSeekbar;
     private NumberSeekbar centralYNumberSeekbar;
+
+    // 鼠标自由模式: 隐藏的按键列表
+    private List<Element> mfmHideElementList = new ArrayList<>();
 
 
     private long timerLongClickTimeout = 3000;
@@ -557,6 +567,10 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
+        // 鼠标自由模式: 添加选择隐藏按键的按钮
+        if ("MFM".equals(value)) {
+            setupMouseFreeModeSelectorButton();
+        }
 
         return digitalSwitchButtonPage;
     }
@@ -564,6 +578,93 @@ public class DigitalSwitchButton extends Element {
     protected void setElementText(String text) {
         this.text = text;
         invalidate();
+    }
+
+    /**
+     * 鼠标自由模式: 设置选择隐藏按键的按钮
+     */
+    private void setupMouseFreeModeSelectorButton() {
+        // 动态创建一个按钮添加到设置页面
+        Button selectHideButton = new Button(getContext());
+        selectHideButton.setText(R.string.mouse_free_mode_select_hide_elements);
+        selectHideButton.setOnClickListener(v -> {
+            SuperPagesController superPagesController = elementController.getSuperPagesController();
+
+            // 加载已保存的隐藏按键列表
+            mfmHideElementList.clear();
+            List<Long> savedIds = elementController.getMouseFreeModeHideElementIds();
+            for (Element element : elementController.getElements()) {
+                if (savedIds.contains(element.elementId)) {
+                    mfmHideElementList.add(element);
+                }
+            }
+
+            // 进入选择模式
+            elementController.changeMode(ElementController.Mode.Select);
+            Element.ElementSelectedCallBack elementSelectedCallBack = element -> {
+                if (element == digitalSwitchButton) {
+                    Toast.makeText(getContext(), "不能选择自身", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (mfmHideElementList.contains(element)) {
+                    mfmHideElementList.remove(element);
+                    element.setEditColor(EDIT_COLOR_SELECT);
+                } else {
+                    mfmHideElementList.add(element);
+                    element.setEditColor(EDIT_COLOR_SELECTED);
+                }
+                element.invalidate();
+            };
+            // 标记已选中的元素
+            for (Element element : mfmHideElementList) {
+                element.setEditColor(EDIT_COLOR_SELECTED);
+            }
+            for (Element element : elementController.getElements()) {
+                element.setElementSelectedCallBack(elementSelectedCallBack);
+            }
+
+            SuperPageLayout pageNull = superPagesController.getPageNull();
+            superPagesController.openNewPage(pageNull);
+            pageNull.setPageReturnListener(() -> {
+                SuperPageLayout lastPage = pageNull.getLastPage();
+                elementController.open();
+                superPagesController.openNewPage(lastPage);
+                elementController.changeMode(ElementController.Mode.Edit);
+
+                // 保存选中的元素ID到 extra_attributes
+                saveMfmHideElementIds();
+            });
+        });
+
+        // 将按钮添加到设置页面的布局中
+        if (digitalSwitchButtonPage instanceof SuperPageLayout) {
+            digitalSwitchButtonPage.addView(selectHideButton);
+        }
+    }
+
+    /**
+     * 保存鼠标自由模式隐藏按键ID到 extra_attributes
+     */
+    private void saveMfmHideElementIds() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < mfmHideElementList.size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append(mfmHideElementList.get(i).elementId);
+        }
+
+        JsonObject extraAttrs = new JsonObject();
+        extraAttrs.addProperty("mouseFreeModeHideIds", sb.toString());
+
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(extraAttrs));
+        elementController.updateElement(elementId, contentValues);
+
+        // 更新 ElementController 的隐藏列表
+        List<Long> ids = new ArrayList<>();
+        for (Element element : mfmHideElementList) {
+            ids.add(element.elementId);
+        }
+        elementController.setMouseFreeModeHideElements(ids);
     }
 
     protected void setElementValue(String value) {
