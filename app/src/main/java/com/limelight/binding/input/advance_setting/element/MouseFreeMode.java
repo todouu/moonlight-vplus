@@ -1,4 +1,3 @@
-//开关按键
 package com.limelight.binding.input.advance_setting.element;
 
 import android.content.ContentValues;
@@ -15,87 +14,66 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.SeekBar;
-import android.widget.TextView;
+import android.widget.Toast;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.limelight.Game;
 import com.limelight.R;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
 import com.limelight.binding.input.advance_setting.superpage.ElementEditText;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
+import com.limelight.binding.input.advance_setting.superpage.SuperPagesController;
 import com.limelight.utils.ColorPickerDialog;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
- * This is a digital button on screen element. It is used to get click and double click user input.
+ * Mouse Free Mode element - standalone toggle button that switches between
+ * trackpad mode (free mouse) and normal mouse mode.
+ * Stores a list of element IDs to hide when free mode is activated.
  */
-public class DigitalSwitchButton extends Element {
-
-    /**
-     * Listener interface to update registered observers.
-     */
-    public interface DigitalSwitchButtonListener {
-
-        /**
-         * onClick event will be fired on button click.
-         */
-        void onClick();
-
-        /**
-         * onLongClick event will be fired on button long click.
-         */
-        void onLongClick();
-
-        /**
-         * onRelease event will be fired on button unpress.
-         */
-        void onRelease();
-    }
+public class MouseFreeMode extends Element {
 
     private PageDeviceController pageDeviceController;
-    private DigitalSwitchButton digitalSwitchButton;
+    private MouseFreeMode mouseFreeMode;
+    private List<Element> hideElementList = new ArrayList<>();
+    private List<Long> parsedHideIds = null;
+    private Context context;
 
-    private DigitalSwitchButtonListener listener;
-    private ElementController.SendEventHandler valueSendHandler;
     private String text;
-    private String value;
+    private String value; // comma-separated element IDs to hide
     private int radius;
     private int thick;
     private int normalColor;
     private int pressedColor;
     private int backgroundColor;
-
-    // New member variables for text color and size
     private int normalTextColor;
     private int pressedTextColor;
     private int textSizePercent;
 
-    private SuperPageLayout digitalSwitchButtonPage;
+    private SuperPageLayout mouseFreeModeSettingPage;
     private NumberSeekbar centralXNumberSeekbar;
     private NumberSeekbar centralYNumberSeekbar;
 
-
-    private long timerLongClickTimeout = 3000;
-    private final Runnable longClickRunnable = new Runnable() {
-        @Override
-        public void run() {
-            onLongClickCallback();
-        }
-    };
     private final Paint paintBorder = new Paint();
     private final Paint paintBackground = new Paint();
     private final Paint paintText = new Paint();
     private final Paint paintEdit = new Paint();
     private final RectF rect = new RectF();
 
-
-    public DigitalSwitchButton(Map<String, Object> attributesMap,
-                               ElementController controller,
-                               PageDeviceController pageDeviceController, Context context) {
+    public MouseFreeMode(Map<String, Object> attributesMap,
+                         ElementController controller,
+                         PageDeviceController pageDeviceController,
+                         Context context) {
         super(attributesMap, controller, context);
         this.pageDeviceController = pageDeviceController;
-        this.digitalSwitchButton = this;
+        this.mouseFreeMode = this;
+        this.context = context;
 
         DisplayMetrics displayMetrics = new DisplayMetrics();
         ((Game) context).getWindowManager().getDefaultDisplay().getRealMetrics(displayMetrics);
@@ -115,7 +93,6 @@ public class DigitalSwitchButton extends Element {
         paintBorder.setStyle(Paint.Style.STROKE);
         paintBackground.setStyle(Paint.Style.FILL);
 
-
         text = (String) attributesMap.get(COLUMN_STRING_ELEMENT_TEXT);
         radius = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_RADIUS)).intValue();
         thick = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_THICK)).intValue();
@@ -124,126 +101,86 @@ public class DigitalSwitchButton extends Element {
         backgroundColor = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_BACKGROUND_COLOR)).intValue();
         value = (String) attributesMap.get(COLUMN_STRING_ELEMENT_VALUE);
 
-        // Load new text properties with backward compatibility
+        // Load text properties with backward compatibility
         if (attributesMap.containsKey(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR)) {
             normalTextColor = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR)).intValue();
         } else {
-            // Default to old behavior: use border color
             normalTextColor = normalColor;
         }
 
         if (attributesMap.containsKey(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR)) {
             pressedTextColor = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR)).intValue();
         } else {
-            // Default to old behavior: use border color
             pressedTextColor = pressedColor;
         }
 
         if (attributesMap.containsKey(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT)) {
             textSizePercent = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT)).intValue();
         } else {
-            // Default based on original hardcoded logic
             textSizePercent = 25;
         }
 
-        valueSendHandler = controller.getSendEventHandler(value);
-        listener = new DigitalSwitchButtonListener() {
-            @Override
-            public void onClick() {
-                valueSendHandler.sendEvent(true);
-            }
+        // Parse hide element IDs from value field
+        parseHideIds();
+    }
 
-            @Override
-            public void onLongClick() {
-
+    private void parseHideIds() {
+        if (value != null && !value.isEmpty() && !"-1".equals(value)) {
+            parsedHideIds = new ArrayList<>();
+            String[] idArray = value.split(",");
+            for (String id : idArray) {
+                try {
+                    long parsed = Long.parseLong(id.trim());
+                    if (parsed != -1) {
+                        parsedHideIds.add(parsed);
+                    }
+                } catch (NumberFormatException ignored) {}
             }
+        }
+    }
 
-            @Override
-            public void onRelease() {
-                valueSendHandler.sendEvent(false);
-            }
-        };
+    /**
+     * Returns the list of element IDs that should be hidden when MFM is active.
+     */
+    public List<Long> getHideElementIds() {
+        return parsedHideIds;
     }
 
     @Override
     protected void onElementDraw(Canvas canvas) {
-
-        // 获取元素尺寸
         int elementWidth = getElementWidth();
         int elementHeight = getElementHeight();
 
-        // 1. 设置画笔属性
-        // 根据百分比设置字体大小
         float textSize = getPercent(elementHeight, textSizePercent);
         paintText.setTextSize(textSize);
-        // 设置字体颜色
         paintText.setColor(isPressed() ? pressedTextColor : normalTextColor);
-        // 边框
         paintBorder.setStrokeWidth(thick);
         paintBorder.setColor(isPressed() ? pressedColor : normalColor);
-        // 背景颜色
         paintBackground.setColor(backgroundColor);
 
-        // 2. 计算精确的居中坐标
-        // 水平中心 X 坐标
         float centerX = elementWidth / 2f;
-
-        // 计算垂直居中的基线 Y 坐标
         Paint.FontMetrics fontMetrics = paintText.getFontMetrics();
         float baselineY = elementHeight / 2f - (fontMetrics.top + fontMetrics.bottom) / 2f;
 
-        // 3. 开始绘制
-        // 绘画范围
         rect.left = rect.top = (float) thick / 2;
         rect.right = elementWidth - rect.left;
         rect.bottom = elementHeight - rect.top;
-        // 绘制背景
         canvas.drawRoundRect(rect, radius, radius, paintBackground);
-        // 绘制边框
         canvas.drawRoundRect(rect, radius, radius, paintBorder);
-
-        // 绘制文字 (使用计算出的精确坐标)
         canvas.drawText(text, centerX, baselineY, paintText);
 
-        // 4. 绘制编辑模式的虚线框
         ElementController.Mode mode = elementController.getMode();
         if (mode == ElementController.Mode.Edit || mode == ElementController.Mode.Select) {
-            // 绘画范围
             rect.left = rect.top = 2;
             rect.right = getWidth() - 2;
             rect.bottom = getHeight() - 2;
-            // 边框
             paintEdit.setColor(editColor);
             canvas.drawRect(rect, paintEdit);
         }
     }
 
-    private void onClickCallback() {
-        // notify listenersbuttonListener.onClick();
-        System.out.println("onClickCallback");
-        listener.onClick();
-        elementController.getHandler().removeCallbacks(longClickRunnable);
-        elementController.getHandler().postDelayed(longClickRunnable, timerLongClickTimeout);
-
-    }
-
-    private void onLongClickCallback() {
-        // notify listeners
-        listener.onLongClick();
-    }
-
-    private void onReleaseCallback() {
-        // notify listeners
-        System.out.println("onReleaseCallback");
-        listener.onRelease();
-
-        // We may be called for a release without a prior click
-        elementController.getHandler().removeCallbacks(longClickRunnable);
-    }
-
     @Override
     public boolean onElementTouchEvent(MotionEvent event) {
-        // get masked (not specific to a pointer) action
         int action = event.getActionMasked();
 
         switch (action) {
@@ -251,10 +188,12 @@ public class DigitalSwitchButton extends Element {
                 elementController.buttonVibrator();
                 if (isPressed()) {
                     setPressed(false);
-                    onReleaseCallback();
+                    // Deactivate MFM
+                    toggleMouseFreeMode(false);
                 } else {
                     setPressed(true);
-                    onClickCallback();
+                    // Activate MFM
+                    toggleMouseFreeMode(true);
                 }
                 invalidate();
                 return true;
@@ -272,6 +211,14 @@ public class DigitalSwitchButton extends Element {
         return true;
     }
 
+    private void toggleMouseFreeMode(boolean activate) {
+        // Delegate to the MFM handler in ElementController for consistent behavior
+        ElementController.SendEventHandler handler = elementController.getSendEventHandler("MFM");
+        if (handler != null) {
+            handler.sendEvent(true); // The handler toggles internally
+        }
+    }
+
     @Override
     public void save() {
         ContentValues contentValues = new ContentValues();
@@ -287,48 +234,42 @@ public class DigitalSwitchButton extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-        // Save new text properties
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, normalTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, pressedTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, textSizePercent);
         elementController.updateElement(elementId, contentValues);
-
     }
 
     @Override
     protected void updatePage() {
-        if (digitalSwitchButtonPage != null) {
+        if (mouseFreeModeSettingPage != null) {
             centralXNumberSeekbar.setValueWithNoCallBack(getElementCentralX());
             centralYNumberSeekbar.setValueWithNoCallBack(getElementCentralY());
         }
-
     }
 
     @Override
     protected SuperPageLayout getInfoPage() {
-        if (digitalSwitchButtonPage == null) {
-            digitalSwitchButtonPage = (SuperPageLayout) LayoutInflater.from(getContext()).inflate(R.layout.page_digital_switch_button_clean, null);
-            centralXNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_central_x);
-            centralYNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_central_y);
-
+        if (mouseFreeModeSettingPage == null) {
+            mouseFreeModeSettingPage = (SuperPageLayout) LayoutInflater.from(getContext()).inflate(R.layout.page_mouse_free_mode_clean, null);
+            centralXNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_x);
+            centralYNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_y);
         }
 
-        NumberSeekbar widthNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_width);
-        NumberSeekbar heightNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_height);
-        NumberSeekbar radiusNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_radius);
-        ElementEditText textElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_text);
-        TextView valueTextView = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_value);
-        NumberSeekbar thickNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_thick);
-        NumberSeekbar layerNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_layer);
-        ElementEditText normalColorElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_normal_color);
-        ElementEditText pressedColorElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_pressed_color);
-        ElementEditText backgroundColorElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_background_color);
-        // Find new views for text properties (assuming these IDs exist in the XML layout)
-        NumberSeekbar textSizeNumberSeekbar = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_text_size);
-        ElementEditText normalTextColorElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_normal_text_color);
-        ElementEditText pressedTextColorElementEditText = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_pressed_text_color);
-        Button copyButton = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_copy);
-        Button deleteButton = digitalSwitchButtonPage.findViewById(R.id.page_digital_switch_button_delete);
+        NumberSeekbar widthNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_width);
+        NumberSeekbar heightNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_height);
+        NumberSeekbar radiusNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_radius);
+        ElementEditText textElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_text);
+        NumberSeekbar thickNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_thick);
+        NumberSeekbar layerNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_layer);
+        ElementEditText normalColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_color);
+        ElementEditText pressedColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_color);
+        ElementEditText backgroundColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_background_color);
+        NumberSeekbar textSizeNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_text_size);
+        ElementEditText normalTextColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_text_color);
+        ElementEditText pressedTextColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_text_color);
+        Button copyButton = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_copy);
+        Button deleteButton = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_delete);
 
         textElementEditText.setTextWithNoTextChangedCallBack(text);
         textElementEditText.setOnTextChangedListener(new ElementEditText.OnTextChangedListener() {
@@ -336,26 +277,6 @@ public class DigitalSwitchButton extends Element {
             public void textChanged(String text) {
                 setElementText(text);
                 save();
-            }
-        });
-
-        valueTextView.setText(pageDeviceController.getKeyNameByValue(value));
-        valueTextView.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                PageDeviceController.DeviceCallBack deviceCallBack = new PageDeviceController.DeviceCallBack() {
-                    @Override
-                    public void OnKeyClick(TextView key) {
-                        CharSequence text = key.getText();
-                        // page页设置值文本
-                        ((TextView) v).setText(text);
-                        // element text 设置文本
-                        textElementEditText.setText(text);
-                        setElementValue(key.getTag().toString());
-                        save();
-                    }
-                };
-                pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
 
@@ -395,7 +316,6 @@ public class DigitalSwitchButton extends Element {
                 save();
             }
         });
-
 
         widthNumberSeekbar.setProgressMax(widthMax);
         widthNumberSeekbar.setProgressMin(widthMin);
@@ -437,7 +357,6 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
-
         radiusNumberSeekbar.setProgressMax(Math.min(getElementWidth(), getElementHeight()) / 2);
         radiusNumberSeekbar.setValueWithNoCallBack(radius);
         radiusNumberSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
@@ -456,7 +375,6 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
-
         thickNumberSeekbar.setValueWithNoCallBack(thick);
         thickNumberSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
             @Override
@@ -474,12 +392,10 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
-
         layerNumberSeekbar.setValueWithNoCallBack(layer);
         layerNumberSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-
             }
 
             @Override
@@ -493,9 +409,8 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
-        // Setup for new text size seekbar
-        textSizeNumberSeekbar.setProgressMin(10); // 10%
-        textSizeNumberSeekbar.setProgressMax(150); // 150%
+        textSizeNumberSeekbar.setProgressMin(10);
+        textSizeNumberSeekbar.setProgressMax(150);
         textSizeNumberSeekbar.setValueWithNoCallBack(textSizePercent);
         textSizeNumberSeekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
             @Override
@@ -513,19 +428,68 @@ public class DigitalSwitchButton extends Element {
             }
         });
 
-        // Refactored setup for all color pickers
+        // Color pickers
         setupColorPickerButton(normalColorElementEditText, () -> this.normalColor, this::setElementNormalColor);
         setupColorPickerButton(pressedColorElementEditText, () -> this.pressedColor, this::setElementPressedColor);
         setupColorPickerButton(backgroundColorElementEditText, () -> this.backgroundColor, this::setElementBackgroundColor);
         setupColorPickerButton(normalTextColorElementEditText, () -> this.normalTextColor, this::setElementNormalTextColor);
         setupColorPickerButton(pressedTextColorElementEditText, () -> this.pressedTextColor, this::setElementPressedTextColor);
 
+        // Select elements to hide button
+        mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_select_hide_button).setOnClickListener(v -> {
+            SuperPagesController superPagesController = elementController.getSuperPagesController();
+
+            // Load saved hide element list
+            hideElementList.clear();
+            List<Long> savedIds = elementController.getMouseFreeModeHideElementIds();
+            for (Element element : elementController.getElements()) {
+                if (savedIds.contains(element.elementId)) {
+                    hideElementList.add(element);
+                }
+            }
+
+            // Enter select mode
+            elementController.changeMode(ElementController.Mode.Select);
+            ElementSelectedCallBack elementSelectedCallBack = element -> {
+                if (element == mouseFreeMode) {
+                    Toast.makeText(getContext(), getContext().getString(R.string.mouse_free_mode_cannot_select_self), Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (hideElementList.contains(element)) {
+                    hideElementList.remove(element);
+                    element.setEditColor(EDIT_COLOR_SELECT);
+                } else {
+                    hideElementList.add(element);
+                    element.setEditColor(EDIT_COLOR_SELECTED);
+                }
+                element.invalidate();
+            };
+            // Mark already-selected elements
+            for (Element element : hideElementList) {
+                element.setEditColor(EDIT_COLOR_SELECTED);
+            }
+            for (Element element : elementController.getElements()) {
+                element.setElementSelectedCallBack(elementSelectedCallBack);
+            }
+
+            SuperPageLayout pageNull = superPagesController.getPageNull();
+            superPagesController.openNewPage(pageNull);
+            pageNull.setPageReturnListener(() -> {
+                SuperPageLayout lastPage = pageNull.getLastPage();
+                elementController.open();
+                superPagesController.openNewPage(lastPage);
+                elementController.changeMode(ElementController.Mode.Edit);
+
+                // Save selected element IDs
+                saveHideElementIds();
+            });
+        });
 
         copyButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
                 ContentValues contentValues = new ContentValues();
-                contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_DIGITAL_SWITCH_BUTTON);
+                contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_MOUSE_FREE_MODE);
                 contentValues.put(COLUMN_STRING_ELEMENT_TEXT, text);
                 contentValues.put(COLUMN_STRING_ELEMENT_VALUE, value);
                 contentValues.put(COLUMN_INT_ELEMENT_WIDTH, getElementWidth());
@@ -538,7 +502,6 @@ public class DigitalSwitchButton extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-                // Add new properties for copy
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, normalTextColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, pressedTextColor);
                 contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, textSizePercent);
@@ -549,22 +512,47 @@ public class DigitalSwitchButton extends Element {
         deleteButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                elementController.toggleInfoPage(digitalSwitchButtonPage);
-                elementController.deleteElement(digitalSwitchButton);
+                elementController.toggleInfoPage(mouseFreeModeSettingPage);
+                elementController.deleteElement(mouseFreeMode);
             }
         });
 
-        return digitalSwitchButtonPage;
+        return mouseFreeModeSettingPage;
+    }
+
+    /**
+     * Save the list of element IDs to hide into the value field.
+     */
+    private void saveHideElementIds() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < hideElementList.size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append(hideElementList.get(i).elementId);
+        }
+
+        if (sb.length() == 0) {
+            value = "-1";
+        } else {
+            value = sb.toString();
+        }
+
+        // Update parsed IDs
+        parseHideIds();
+
+        // Save to DB
+        save();
+
+        // Update ElementController's hide list
+        List<Long> ids = new ArrayList<>();
+        for (Element element : hideElementList) {
+            ids.add(element.elementId);
+        }
+        elementController.setMouseFreeModeHideElements(ids);
     }
 
     protected void setElementText(String text) {
         this.text = text;
         invalidate();
-    }
-
-    protected void setElementValue(String value) {
-        this.value = value;
-        valueSendHandler = elementController.getSendEventHandler(value);
     }
 
     protected void setElementRadius(int radius) {
@@ -592,7 +580,6 @@ public class DigitalSwitchButton extends Element {
         invalidate();
     }
 
-    // New setter methods for text properties
     protected void setElementNormalTextColor(int normalTextColor) {
         this.normalTextColor = normalTextColor;
         invalidate();
@@ -610,9 +597,9 @@ public class DigitalSwitchButton extends Element {
 
     public static ContentValues getInitialInfo() {
         ContentValues contentValues = new ContentValues();
-        contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_DIGITAL_SWITCH_BUTTON);
-        contentValues.put(COLUMN_STRING_ELEMENT_TEXT, "A");
-        contentValues.put(COLUMN_STRING_ELEMENT_VALUE, "k29");
+        contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_MOUSE_FREE_MODE);
+        contentValues.put(COLUMN_STRING_ELEMENT_TEXT, "MFM");
+        contentValues.put(COLUMN_STRING_ELEMENT_VALUE, "-1");
         contentValues.put(COLUMN_INT_ELEMENT_WIDTH, 100);
         contentValues.put(COLUMN_INT_ELEMENT_HEIGHT, 100);
         contentValues.put(COLUMN_INT_ELEMENT_LAYER, 50);
@@ -623,13 +610,10 @@ public class DigitalSwitchButton extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, 0xF0888888);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, 0xF00000FF);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, 0x00FFFFFF);
-        // Add new text properties with good defaults for new buttons
-        contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, 0xFFFFFFFF); // White
-        contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, 0xFFCCCCCC); // Light Grey for pressed state
+        contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, 0xFFFFFFFF);
+        contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, 0xFFCCCCCC);
         contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, 25);
         return contentValues;
-
-
     }
 
     private interface IntSupplier {
@@ -640,50 +624,30 @@ public class DigitalSwitchButton extends Element {
         void accept(int value);
     }
 
-    /**
-     * 更新颜色显示按钮的外观（文本、背景色、文本颜色）。
-     */
     private void updateColorDisplay(ElementEditText colorDisplay, int color) {
-        // 显示十六进制颜色码
         colorDisplay.setTextWithNoTextChangedCallBack(String.format("%08X", color));
-        // 将背景设置为当前颜色
         colorDisplay.setBackgroundColor(color);
-
-        // 根据背景色的亮度自动设置文本颜色为黑色或白色，以确保可读性
         double luminance = (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255;
         colorDisplay.setTextColor(luminance > 0.5 ? Color.BLACK : Color.WHITE);
         colorDisplay.setGravity(Gravity.CENTER);
     }
 
-    /**
-     * 配置一个 ElementEditText 控件，使其作为颜色选择器按钮使用。
-     *
-     * @param colorDisplay        用于作为按钮的 ElementEditText 视图。
-     * @param initialColorFetcher 一个用于获取当前颜色值的 Lambda 表达式。
-     * @param colorUpdater        一个用于设置新颜色值的 Lambda 表达式。
-     */
     private void setupColorPickerButton(ElementEditText colorDisplay, IntSupplier initialColorFetcher, IntConsumer colorUpdater) {
-        // 禁输入，让 EditText 表现得像一个按钮
         colorDisplay.setFocusable(false);
         colorDisplay.setCursorVisible(false);
         colorDisplay.setKeyListener(null);
-
-        // 使用传入的 Lambda 获取初始颜色并设置外观
         updateColorDisplay(colorDisplay, initialColorFetcher.get());
-
-        // 设置点击监听器，打开颜色选择器
         colorDisplay.setOnClickListener(v -> {
-            // 再次获取当前颜色，确保打开时颜色是最新的
             new ColorPickerDialog(
                     getContext(),
                     initialColorFetcher.get(),
-                    true, // true 表示显示 Alpha 透明度滑块
+                    true,
                     newColor -> {
-                        colorUpdater.accept(newColor); // 使用传入的 Lambda 更新颜色属性
-                        save();                      // 保存更改
-                        updateColorDisplay(colorDisplay, newColor); // 更新UI显示
+                        colorUpdater.accept(newColor);
+                        save();
+                        updateColorDisplay(colorDisplay, newColor);
                     }
-            ).show(); // <-- 主要变化：在最后调用 .show()
+            ).show();
         });
     }
 }

@@ -315,6 +315,13 @@ public class ElementController {
                 addElement(contentValues);
             }
         });
+        pageEdit.findViewById(R.id.page_edit_add_mouse_free_mode).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ContentValues contentValues = MouseFreeMode.getInitialInfo();
+                addElement(contentValues);
+            }
+        });
         pageEdit.findViewById(R.id.page_edit_add_wheel_pad).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -439,6 +446,12 @@ public class ElementController {
                         this,
                         pageDeviceController,
                         controllerManager.getSuperPagesController(),
+                        context);
+                break;
+            case Element.ELEMENT_TYPE_MOUSE_FREE_MODE:
+                element = new MouseFreeMode(attributesMap,
+                        this,
+                        pageDeviceController,
                         context);
                 break;
             case Element.ELEMENT_TYPE_DIGITAL_PAD:
@@ -673,20 +686,20 @@ public class ElementController {
     }
 
     /**
-     * 初始化鼠标自由模式的隐藏元素列表。
-     * 遍历所有元素，找到 value 为 "MFM" 的 DigitalSwitchButton，
-     * 从其已解析的 extra_attributes 中读取 mouseFreeModeHideIds。
+     * Initialize mouse free mode hide element list.
+     * Looks for MouseFreeMode elements first, then falls back to DigitalSwitchButton with MFM value
+     * for backward compatibility.
      */
     public void initMouseFreeModeFromElements() {
         mouseFreeModeActive = false;
         mouseFreeModeHideElementIds.clear();
         for (Element element : elements) {
-            if (element instanceof DigitalSwitchButton) {
-                DigitalSwitchButton dsb = (DigitalSwitchButton) element;
-                List<Long> mfmIds = dsb.getMouseFreeModeHideIds();
+            if (element instanceof MouseFreeMode) {
+                MouseFreeMode mfm = (MouseFreeMode) element;
+                List<Long> mfmIds = mfm.getHideElementIds();
                 if (mfmIds != null && !mfmIds.isEmpty()) {
                     mouseFreeModeHideElementIds.addAll(mfmIds);
-                    break; // 只需要一个 MFM 按键的配置
+                    break;
                 }
             }
         }
@@ -1137,13 +1150,11 @@ public class ElementController {
                     if (down) {
                         mouseFreeModeActive = !mouseFreeModeActive;
                         if (mouseFreeModeActive) {
-                            // 进入鼠标自由模式: 多点触控 + 显示鼠标指针 + 隐藏选中按键
-                            controllerManager.getTouchController().setTouchMode(false);
-                            controllerManager.getTouchController().setEnhancedTouch(true);
-                            // 注意: enableNativeMousePointer 必须在 setEnhancedTouch 之后调用,
-                            // 因为 setEnhancedTouch 会将 enableNativeMousePointer 设为 false
+                            // Enter mouse free mode: trackpad mode + show cursor + hide elements
+                            controllerManager.getTouchController().setTouchMode(true);
+                            controllerManager.getTouchController().setEnhancedTouch(false);
                             game.enableNativeMousePointer(true);
-                            // 隐藏用户选择的按键
+                            // Hide user-selected elements
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {
                                     element.setVisibility(View.GONE);
@@ -1151,13 +1162,11 @@ public class ElementController {
                             }
                             showToast(context.getString(R.string.mouse_free_mode_activated));
                         } else {
-                            // 退出鼠标自由模式: 恢复之前的模式 + 隐藏鼠标指针 + 显示按键
-                            boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
-                            boolean enhancedTouch = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false)));
-                            controllerManager.getTouchController().setTouchMode(touchMode);
-                            controllerManager.getTouchController().setEnhancedTouch(enhancedTouch);
+                            // Exit mouse free mode: normal mouse mode + hide cursor + show elements
+                            controllerManager.getTouchController().setTouchMode(false);
+                            controllerManager.getTouchController().setEnhancedTouch(false);
                             game.enableNativeMousePointer(false);
-                            // 显示之前隐藏的按键
+                            // Show previously hidden elements
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {
                                     element.setVisibility(View.VISIBLE);
