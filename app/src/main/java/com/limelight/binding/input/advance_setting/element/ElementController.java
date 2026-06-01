@@ -395,6 +395,15 @@ public class ElementController {
 
         // 初始化鼠标自由模式的隐藏元素列表
         initMouseFreeModeFromElements();
+
+        // 正常状态（MFM 未激活）下隐藏选中的按钮
+        if (!mouseFreeModeActive && !mouseFreeModeHideElementIds.isEmpty()) {
+            for (Element element : elements) {
+                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                    element.setVisibility(View.GONE);
+                }
+            }
+        }
     }
 
     protected Element addElement(ContentValues contentValues) {
@@ -1191,28 +1200,28 @@ public class ElementController {
                     if (down) {
                         mouseFreeModeActive = !mouseFreeModeActive;
                         if (mouseFreeModeActive) {
-                            // Enter mouse free mode: trackpad mode + show cursor + hide elements
+                            // Enter mouse free mode: trackpad mode + show cursor + show all elements
                             controllerManager.getTouchController().setTouchMode(true);
                             controllerManager.getTouchController().setEnhancedTouch(false);
                             game.enableNativeMousePointer(true);
-                            // Hide user-selected elements
+                            // Show all elements (restore any previously hidden)
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {
-                                    element.setVisibility(View.GONE);
+                                    element.setVisibility(View.VISIBLE);
                                 }
                             }
                             showToast(context.getString(R.string.mouse_free_mode_activated));
                         } else {
-                            // Exit mouse free mode: restore user's saved config + hide cursor + show elements
+                            // Exit mouse free mode: restore user's saved config + hide cursor + hide selected elements
                             boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
                             boolean enhancedTouch = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false)));
                             controllerManager.getTouchController().setTouchMode(touchMode);
                             controllerManager.getTouchController().setEnhancedTouch(enhancedTouch);
                             game.enableNativeMousePointer(false);
-                            // Show previously hidden elements
+                            // Hide user-selected elements
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {
-                                    element.setVisibility(View.VISIBLE);
+                                    element.setVisibility(View.GONE);
                                 }
                             }
                             showToast(context.getString(R.string.mouse_free_mode_deactivated));
