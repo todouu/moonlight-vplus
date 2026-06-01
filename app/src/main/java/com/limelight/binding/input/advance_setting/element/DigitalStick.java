@@ -316,20 +316,12 @@ public class DigitalStick extends Element {
                     downValueSendHandler.sendEvent(false);
                     downIsPressed = false;
                 }
-                // 前进键：冲刺激活时锁定按下
-                if (boostActive) {
-                    if (!upIsPressed) {
-                        upValueSendHandler.sendEvent(true);
-                        upIsPressed = true;
-                    }
-                } else {
-                    if (y > deadZoneRadius * 0.01 && !upIsPressed) {
-                        upValueSendHandler.sendEvent(true);
-                        upIsPressed = true;
-                    } else if (y < deadZoneRadius * 0.01 && upIsPressed) {
-                        upValueSendHandler.sendEvent(false);
-                        upIsPressed = false;
-                    }
+                if (y > deadZoneRadius * 0.01 && !upIsPressed) {
+                    upValueSendHandler.sendEvent(true);
+                    upIsPressed = true;
+                } else if (y < deadZoneRadius * 0.01 && upIsPressed) {
+                    upValueSendHandler.sendEvent(false);
+                    upIsPressed = false;
                 }
             }
 
@@ -895,6 +887,7 @@ public class DigitalStick extends Element {
 
     public void setBoostThreshold(int boostThreshold) {
         this.boostThreshold = boostThreshold;
+        invalidate();
     }
 
     public void setBoostKey(String boostKey) {

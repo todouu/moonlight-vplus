@@ -771,9 +771,6 @@ public class InvisibleAnalogStick extends Element {
             // 冲刺判定：移动距离（任意方向）超过阈值则触发冲刺键
             float radiusNormalized = (float) (movement_radius / complete);
             updateBoost(radiusNormalized);
-            if (boostActive) {
-                yOut = 1.0f; // 前进锁定到最大
-            }
             notifyOnMovement(xOut, yOut);
         }
     }
@@ -897,6 +894,7 @@ public class InvisibleAnalogStick extends Element {
 
     public void setBoostThreshold(int boostThreshold) {
         this.boostThreshold = boostThreshold;
+        invalidate();
     }
 
     public void setBoostKey(String boostKey) {

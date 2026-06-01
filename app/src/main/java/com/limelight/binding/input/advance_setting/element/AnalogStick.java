@@ -434,9 +434,6 @@ public class AnalogStick extends Element {
             float yOut = correlated_y / complete;
             float radiusNormalized = (float) (movement_radius / complete);
             updateBoost(radiusNormalized);
-            if (boostActive) {
-                yOut = 1.0f;
-            }
             notifyOnMovement(xOut, yOut);
         }
     }
@@ -835,6 +832,7 @@ public class AnalogStick extends Element {
 
     public void setBoostThreshold(int boostThreshold) {
         this.boostThreshold = boostThreshold;
+        invalidate();
     }
 
     public void setBoostKey(String boostKey) {
