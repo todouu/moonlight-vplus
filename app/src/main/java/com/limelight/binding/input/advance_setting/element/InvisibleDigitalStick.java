@@ -810,6 +810,14 @@ public class InvisibleDigitalStick extends Element {
         // draw dead zone
         canvas.drawCircle(circleCenterX, circleCenterY, radius_dead_zone, paintStick);
 
+        // draw boost threshold line (disappears when boost is active)
+        if (boostThreshold > 0 && !boostActive) {
+            float thresholdY = circleCenterY - (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
+            paintStick.setColor(thresholdColor);
+            canvas.drawLine(circleCenterX - radius_complete, thresholdY, circleCenterX + radius_complete, thresholdY, paintStick);
+        }
+
         // draw stick depending on state
         switch (stick_state) {
             case NO_MOVEMENT: {
@@ -819,7 +827,11 @@ public class InvisibleDigitalStick extends Element {
             }
             case MOVED_IN_DEAD_ZONE:
             case MOVED_ACTIVE: {
-                paintStick.setColor(pressedColor);
+                if (boostActive) {
+                    paintStick.setColor(0xFFFF0000);
+                } else {
+                    paintStick.setColor(pressedColor);
+                }
                 canvas.drawCircle(position_stick_x, position_stick_y, radius_analog_stick, paintStick);
                 break;
             }
