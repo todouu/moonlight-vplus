@@ -196,7 +196,7 @@ public class MouseFreeMode extends Element {
 
                 elementController.buttonVibrator();
                 // Toggle MFM via the centralized handler
-                toggleMouseFreeMode(!elementController.isMouseFreeModeActive());
+                toggleMouseFreeMode();
                 // Sync pressed/visual state with actual MFM state
                 setPressed(elementController.isMouseFreeModeActive());
                 invalidate();
@@ -215,7 +215,7 @@ public class MouseFreeMode extends Element {
         return true;
     }
 
-    private void toggleMouseFreeMode(boolean activate) {
+    private void toggleMouseFreeMode() {
         // Delegate to the MFM handler in ElementController for consistent behavior
         ElementController.SendEventHandler handler = elementController.getSendEventHandler("MFM");
         if (handler != null) {

@@ -320,6 +320,13 @@ public class ElementController {
         pageEdit.findViewById(R.id.page_edit_add_mouse_free_mode).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                // Only allow one MouseFreeMode element per config
+                for (Element element : elements) {
+                    if (element instanceof MouseFreeMode) {
+                        showToast(context.getString(R.string.mouse_free_mode_already_exists));
+                        return;
+                    }
+                }
                 ContentValues contentValues = MouseFreeMode.getInitialInfo();
                 addElement(contentValues);
             }

@@ -1046,6 +1046,7 @@
     <string name="mouse_free_mode_activated">Trackpad Mode</string>
     <string name="mouse_free_mode_deactivated">Mouse Mode</string>
     <string name="mouse_free_mode_cannot_select_self">Cannot select self</string>
+    <string name="mouse_free_mode_already_exists">Mouse Free Mode already exists</string>
     <string name="layout_page_edit_text_mfm">Mouse Free Mode</string>
     <string name="page_mfm_title">Mouse Free Mode</string>
     <string name="page_mfm_select_hide_elements">Select elements to hide</string>
