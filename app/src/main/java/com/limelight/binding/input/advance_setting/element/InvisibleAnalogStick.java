@@ -686,6 +686,14 @@ public class InvisibleAnalogStick extends Element {
 
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
+
+            // 编辑模式下显示冲刺阈值圈（方便调整时看到范围）
+            if (boostThreshold > 0) {
+                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
+                paintStick.setColor(thresholdColor);
+                canvas.drawCircle(getWidth() / 2, getHeight() / 2, boostRadius, paintStick);
+            }
         }
 
         if (!isPressed()) {
@@ -707,12 +715,12 @@ public class InvisibleAnalogStick extends Element {
         // draw dead zone
         canvas.drawCircle(circleCenterX, circleCenterY, radius_dead_zone, paintStick);
 
-        // draw boost threshold line (disappears when boost is active)
+        // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive) {
-            float thresholdY = circleCenterY - (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600; // 橙色，透明度跟摇杆一致
             paintStick.setColor(thresholdColor);
-            canvas.drawLine(circleCenterX - radius_complete, thresholdY, circleCenterX + radius_complete, thresholdY, paintStick);
+            canvas.drawCircle(circleCenterX, circleCenterY, boostRadius, paintStick);
         }
 
         // draw stick depending on state
@@ -760,25 +768,27 @@ public class InvisibleAnalogStick extends Element {
         if (stick_state == InvisibleAnalogStick.STICK_STATE.MOVED_ACTIVE) {
             float xOut = -correlated_x / complete;
             float yOut = correlated_y / complete;   // 前进方向为正
-            // 前推冲刺：前进量超过阈值则按下冲刺键(L3)，并把前进锁定到最大
-            updateBoost(yOut);
+            // 冲刺判定：移动距离（任意方向）超过阈值则触发冲刺键
+            float radiusNormalized = (float) (movement_radius / complete);
+            updateBoost(radiusNormalized);
             if (boostActive) {
-                yOut = 1.0f; // L 前进最大
+                yOut = 1.0f; // 前进锁定到最大
             }
             notifyOnMovement(xOut, yOut);
         }
     }
 
     /**
-     * 前推冲刺判定：当前进量(0-1)达到阈值时按下冲刺键，低于阈值时松开。
+     * 冲刺判定：当摇杆移动距离(0-1)达到阈值时按下冲刺键，低于阈值时松开。
+     * 任意方向推到外圈边缘都可触发。
      *
-     * @param yForward 前进分量，范围约 0..1（向前为正）
+     * @param radiusNormalized 归一化的移动半径，0..1
      */
-    private void updateBoost(float yForward) {
+    private void updateBoost(float radiusNormalized) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) {
             return; // 功能关闭
         }
-        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

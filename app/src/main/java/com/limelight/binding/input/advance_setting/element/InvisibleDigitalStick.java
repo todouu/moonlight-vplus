@@ -293,8 +293,9 @@ public class InvisibleDigitalStick extends Element {
         listener = new InvisibleDigitalStickListener() {
             @Override
             public void onMovement(float x, float y) {
-                // 前推冲刺判定
-                updateBoost(y);
+                // 冲刺判定：用总移动距离（任意方向推到外圈边缘）
+                float radiusNormalized = (float) Math.sqrt(x * x + y * y);
+                updateBoost(radiusNormalized);
 
                 if (x < -deadZoneRadius * 0.01 && !leftIsPressed) {
                     leftValueSendHandler.sendEvent(true);
@@ -789,6 +790,14 @@ public class InvisibleDigitalStick extends Element {
 
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
+
+            // 编辑模式下显示冲刺阈值圈
+            if (boostThreshold > 0) {
+                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
+                paintStick.setColor(thresholdColor);
+                canvas.drawCircle(getWidth() / 2, getHeight() / 2, boostRadius, paintStick);
+            }
         }
 
         if (!isPressed()) {
@@ -810,12 +819,12 @@ public class InvisibleDigitalStick extends Element {
         // draw dead zone
         canvas.drawCircle(circleCenterX, circleCenterY, radius_dead_zone, paintStick);
 
-        // draw boost threshold line (disappears when boost is active)
+        // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive) {
-            float thresholdY = circleCenterY - (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
             paintStick.setColor(thresholdColor);
-            canvas.drawLine(circleCenterX - radius_complete, thresholdY, circleCenterX + radius_complete, thresholdY, paintStick);
+            canvas.drawCircle(circleCenterX, circleCenterY, boostRadius, paintStick);
         }
 
         // draw stick depending on state
@@ -977,13 +986,13 @@ public class InvisibleDigitalStick extends Element {
     }
 
     /**
-     * 前推冲刺判定：前进量(0~1)达到阈值时按下冲刺键(Shift)。
+     * 冲刺判定：移动距离(0~1)达到阈值时按下冲刺键(Shift)。
      */
-    private void updateBoost(float yForward) {
+    private void updateBoost(float radiusNormalized) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) {
             return;
         }
-        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

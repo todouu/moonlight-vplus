@@ -291,7 +291,9 @@ public class DigitalStick extends Element {
         listener = new DigitalStickListener() {
             @Override
             public void onMovement(float x, float y) {
-                updateBoost(y);
+                // 冲刺判定：用总移动距离（任意方向推到外圈边缘）
+                float radiusNormalized = (float) Math.sqrt(x * x + y * y);
+                updateBoost(radiusNormalized);
 
                 if (x < -deadZoneRadius * 0.01 && !leftIsPressed) {
                     leftValueSendHandler.sendEvent(true);
@@ -390,12 +392,12 @@ public class DigitalStick extends Element {
         // draw dead zone
         canvas.drawCircle(radius, radius, radius_dead_zone, paintStick);
 
-        // draw boost threshold line (disappears when boost is active)
+        // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive && isPressed()) {
-            float thresholdY = radius - (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
             paintStick.setColor(thresholdColor);
-            canvas.drawLine(radius - radius_complete, thresholdY, radius + radius_complete, thresholdY, paintStick);
+            canvas.drawCircle(radius, radius, boostRadius, paintStick);
         }
 
         // draw stick depending on state
@@ -427,6 +429,13 @@ public class DigitalStick extends Element {
             paintEdit.setColor(editColor);
             canvas.drawRect(rect, paintEdit);
 
+            // 编辑模式下显示冲刺阈值圈
+            if (boostThreshold > 0) {
+                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
+                paintStick.setColor(thresholdColor);
+                canvas.drawCircle(radius, radius, boostRadius, paintStick);
+            }
         }
     }
 
@@ -893,9 +902,9 @@ public class DigitalStick extends Element {
         this.boostKeySendHandler = elementController.getSendEventHandler(boostKey);
     }
 
-    private void updateBoost(float yForward) {
+    private void updateBoost(float radiusNormalized) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) return;
-        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

@@ -361,12 +361,12 @@ public class AnalogStick extends Element {
         // draw dead zone
         canvas.drawCircle(radius, radius, radius_dead_zone, paintStick);
 
-        // draw boost threshold line (disappears when boost is active)
+        // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive && isPressed()) {
-            float thresholdY = radius - (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
             paintStick.setColor(thresholdColor);
-            canvas.drawLine(radius - radius_complete, thresholdY, radius + radius_complete, thresholdY, paintStick);
+            canvas.drawCircle(radius, radius, boostRadius, paintStick);
         }
 
         // draw stick depending on state
@@ -398,6 +398,13 @@ public class AnalogStick extends Element {
             paintEdit.setColor(editColor);
             canvas.drawRect(rect, paintEdit);
 
+            // 编辑模式下显示冲刺阈值圈
+            if (boostThreshold > 0) {
+                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
+                paintStick.setColor(thresholdColor);
+                canvas.drawCircle(radius, radius, boostRadius, paintStick);
+            }
         }
     }
 
@@ -425,7 +432,8 @@ public class AnalogStick extends Element {
         if (stick_state == AnalogStick.STICK_STATE.MOVED_ACTIVE) {
             float xOut = -correlated_x / complete;
             float yOut = correlated_y / complete;
-            updateBoost(yOut);
+            float radiusNormalized = (float) (movement_radius / complete);
+            updateBoost(radiusNormalized);
             if (boostActive) {
                 yOut = 1.0f;
             }
@@ -433,9 +441,9 @@ public class AnalogStick extends Element {
         }
     }
 
-    private void updateBoost(float yForward) {
+    private void updateBoost(float radiusNormalized) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) return;
-        boolean shouldBoost = yForward > 0 && (yForward * 100f) >= boostThreshold;
+        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);
