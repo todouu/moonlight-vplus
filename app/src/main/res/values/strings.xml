@@ -1043,6 +1043,9 @@
     <string name="layout_page_device_text_104a1">Open GAME MENU</string>
     <string name="layout_page_device_text_mfm">Mouse Free</string>
     <string name="mouse_free_mode_select_hide_elements">Select elements to hide</string>
+    <string name="mouse_free_mode_activated">Mouse Free Mode</string>
+    <string name="mouse_free_mode_deactivated">Mouse Lock Mode</string>
+    <string name="mouse_free_mode_cannot_select_self">Cannot select self</string>
     <string name="layout_page_digital_combine_button_text_3bb27">Type: Combo Key</string>
     <string name="layout_page_digital_combine_button_text_bab9f">Display Text</string>
     <string name="layout_page_digital_combine_button_text_499ef">12345</string>

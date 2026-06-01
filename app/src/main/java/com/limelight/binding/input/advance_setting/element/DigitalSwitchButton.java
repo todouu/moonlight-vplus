@@ -87,6 +87,8 @@ public class DigitalSwitchButton extends Element {
 
     // 鼠标自由模式: 隐藏的按键列表
     private List<Element> mfmHideElementList = new ArrayList<>();
+    // 鼠标自由模式: 从 extra_attributes 解析的隐藏按键 ID
+    private List<Long> parsedMfmHideIds = null;
 
 
     private long timerLongClickTimeout = 3000;
@@ -157,6 +159,28 @@ public class DigitalSwitchButton extends Element {
         } else {
             // Default based on original hardcoded logic
             textSizePercent = 25;
+        }
+
+        // 解析鼠标自由模式的隐藏按键ID
+        if ("MFM".equals(value) && attributesMap.containsKey(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES)) {
+            String extraAttrsJson = (String) attributesMap.get(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES);
+            if (extraAttrsJson != null && !extraAttrsJson.isEmpty()) {
+                try {
+                    JsonObject extraAttrs = JsonParser.parseString(extraAttrsJson).getAsJsonObject();
+                    if (extraAttrs.has("mouseFreeModeHideIds")) {
+                        String idsStr = extraAttrs.get("mouseFreeModeHideIds").getAsString();
+                        if (!idsStr.isEmpty()) {
+                            parsedMfmHideIds = new ArrayList<>();
+                            String[] idArray = idsStr.split(",");
+                            for (String id : idArray) {
+                                try {
+                                    parsedMfmHideIds.add(Long.parseLong(id.trim()));
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
         }
 
         valueSendHandler = controller.getSendEventHandler(value);
@@ -603,7 +627,7 @@ public class DigitalSwitchButton extends Element {
             elementController.changeMode(ElementController.Mode.Select);
             Element.ElementSelectedCallBack elementSelectedCallBack = element -> {
                 if (element == digitalSwitchButton) {
-                    Toast.makeText(getContext(), "不能选择自身", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getContext(), getContext().getString(R.string.mouse_free_mode_cannot_select_self), Toast.LENGTH_SHORT).show();
                     return;
                 }
                 if (mfmHideElementList.contains(element)) {
@@ -652,7 +676,24 @@ public class DigitalSwitchButton extends Element {
             sb.append(mfmHideElementList.get(i).elementId);
         }
 
-        JsonObject extraAttrs = new JsonObject();
+        // Read existing extra_attributes and merge new field
+        JsonObject extraAttrs;
+        Map<String, Object> attrs = elementController.getControllerManager().getSuperConfigDatabaseHelper()
+                .queryAllElementAttributes(elementController.getCurrentConfigId(), elementId);
+        if (attrs != null && attrs.containsKey(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES)) {
+            String existingJson = (String) attrs.get(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES);
+            if (existingJson != null && !existingJson.isEmpty()) {
+                try {
+                    extraAttrs = JsonParser.parseString(existingJson).getAsJsonObject();
+                } catch (Exception e) {
+                    extraAttrs = new JsonObject();
+                }
+            } else {
+                extraAttrs = new JsonObject();
+            }
+        } else {
+            extraAttrs = new JsonObject();
+        }
         extraAttrs.addProperty("mouseFreeModeHideIds", sb.toString());
 
         ContentValues contentValues = new ContentValues();
@@ -665,6 +706,16 @@ public class DigitalSwitchButton extends Element {
             ids.add(element.elementId);
         }
         elementController.setMouseFreeModeHideElements(ids);
+
+        // 更新本地缓存
+        parsedMfmHideIds = ids;
+    }
+
+    /**
+     * 获取从 extra_attributes 中解析的鼠标自由模式隐藏按键ID列表
+     */
+    public List<Long> getMouseFreeModeHideIds() {
+        return parsedMfmHideIds;
     }
 
     protected void setElementValue(String value) {

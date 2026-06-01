@@ -968,6 +968,9 @@
     <string name="layout_page_device_text_104a1">打开GAME MENU</string>
     <string name="layout_page_device_text_mfm">鼠标自由</string>
     <string name="mouse_free_mode_select_hide_elements">选择隐藏的按键</string>
+    <string name="mouse_free_mode_activated">鼠标自由模式</string>
+    <string name="mouse_free_mode_deactivated">鼠标锁定模式</string>
+    <string name="mouse_free_mode_cannot_select_self">不能选择自身</string>
     <string name="layout_page_digital_combine_button_text_3bb27">类型 : 组合键</string>
     <string name="layout_page_digital_combine_button_text_bab9f">显示文本</string>
     <string name="layout_page_digital_combine_button_text_499ef">一二三四五</string>

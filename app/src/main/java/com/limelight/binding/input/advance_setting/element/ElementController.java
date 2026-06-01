@@ -139,6 +139,14 @@ public class ElementController {
         return controllerManager.getSuperPagesController();
     }
 
+    public ControllerManager getControllerManager() {
+        return controllerManager;
+    }
+
+    public long getCurrentConfigId() {
+        return currentConfigId;
+    }
+
 
     /**
      * 隐藏所有虚拟按键的容器。
@@ -338,6 +346,12 @@ public class ElementController {
 
 
     public void loadAllElement(Long configId) {
+        // If free mode was active, restore mouse state before loading new config
+        if (mouseFreeModeActive) {
+            game.enableNativeMousePointer(false);
+            mouseFreeModeActive = false;
+        }
+
         currentConfigId = configId;
         removeAllElementsOnScreen();
         elementIds = controllerManager.getSuperConfigDatabaseHelper().queryAllElementIds(configId);
@@ -661,39 +675,21 @@ public class ElementController {
     /**
      * 初始化鼠标自由模式的隐藏元素列表。
      * 遍历所有元素，找到 value 为 "MFM" 的 DigitalSwitchButton，
-     * 从其 extra_attributes 中读取 mouseFreeModeHideIds。
+     * 从其已解析的 extra_attributes 中读取 mouseFreeModeHideIds。
      */
     public void initMouseFreeModeFromElements() {
         mouseFreeModeActive = false;
         mouseFreeModeHideElementIds.clear();
         for (Element element : elements) {
-            String extraAttrs = getElementExtraAttributes(element.elementId);
-            if (extraAttrs != null && !extraAttrs.isEmpty()) {
-                try {
-                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(extraAttrs).getAsJsonObject();
-                    if (json.has("mouseFreeModeHideIds")) {
-                        String idsStr = json.get("mouseFreeModeHideIds").getAsString();
-                        if (!idsStr.isEmpty()) {
-                            String[] idArray = idsStr.split(",");
-                            for (String id : idArray) {
-                                try {
-                                    mouseFreeModeHideElementIds.add(Long.parseLong(id.trim()));
-                                } catch (NumberFormatException ignored) {}
-                            }
-                        }
-                        break; // 只需要一个 MFM 按键的配置
-                    }
-                } catch (Exception ignored) {}
+            if (element instanceof DigitalSwitchButton) {
+                DigitalSwitchButton dsb = (DigitalSwitchButton) element;
+                List<Long> mfmIds = dsb.getMouseFreeModeHideIds();
+                if (mfmIds != null && !mfmIds.isEmpty()) {
+                    mouseFreeModeHideElementIds.addAll(mfmIds);
+                    break; // 只需要一个 MFM 按键的配置
+                }
             }
         }
-    }
-
-    private String getElementExtraAttributes(long elementId) {
-        Map<String, Object> attrs = controllerManager.getSuperConfigDatabaseHelper().queryAllElementAttributes(currentConfigId, elementId);
-        if (attrs != null && attrs.containsKey(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES)) {
-            return (String) attrs.get(DigitalMovableButton.COLUMN_STRING_EXTRA_ATTRIBUTES);
-        }
-        return null;
     }
 
     /**
@@ -1144,6 +1140,8 @@ public class ElementController {
                             // 进入鼠标自由模式: 多点触控 + 显示鼠标指针 + 隐藏选中按键
                             controllerManager.getTouchController().setTouchMode(false);
                             controllerManager.getTouchController().setEnhancedTouch(true);
+                            // 注意: enableNativeMousePointer 必须在 setEnhancedTouch 之后调用,
+                            // 因为 setEnhancedTouch 会将 enableNativeMousePointer 设为 false
                             game.enableNativeMousePointer(true);
                             // 隐藏用户选择的按键
                             for (Element element : elements) {
@@ -1151,7 +1149,7 @@ public class ElementController {
                                     element.setVisibility(View.GONE);
                                 }
                             }
-                            showToast("鼠标自由模式");
+                            showToast(context.getString(R.string.mouse_free_mode_activated));
                         } else {
                             // 退出鼠标自由模式: 恢复之前的模式 + 隐藏鼠标指针 + 显示按键
                             boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
@@ -1165,7 +1163,7 @@ public class ElementController {
                                     element.setVisibility(View.VISIBLE);
                                 }
                             }
-                            showToast("鼠标锁定模式");
+                            showToast(context.getString(R.string.mouse_free_mode_deactivated));
                         }
                     }
                 }
