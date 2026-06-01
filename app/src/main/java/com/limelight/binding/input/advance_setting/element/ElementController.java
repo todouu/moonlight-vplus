@@ -22,6 +22,8 @@ import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.Toast;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.limelight.Game;
 import com.limelight.LimeLog;
 import com.limelight.R;
@@ -693,13 +695,45 @@ public class ElementController {
     public void initMouseFreeModeFromElements() {
         mouseFreeModeActive = false;
         mouseFreeModeHideElementIds.clear();
+        // First: look for new MouseFreeMode element type
         for (Element element : elements) {
             if (element instanceof MouseFreeMode) {
                 MouseFreeMode mfm = (MouseFreeMode) element;
                 List<Long> mfmIds = mfm.getHideElementIds();
                 if (mfmIds != null && !mfmIds.isEmpty()) {
                     mouseFreeModeHideElementIds.addAll(mfmIds);
-                    break;
+                    return; // Found, done
+                }
+            }
+        }
+        // Fallback: check legacy DigitalSwitchButton with MFM value
+        for (Element element : elements) {
+            if (element instanceof DigitalSwitchButton) {
+                Map<String, Object> attrs = controllerManager.getSuperConfigDatabaseHelper()
+                    .queryAllElementAttributes(currentConfigId, element.elementId);
+                if (attrs != null) {
+                    String val = (String) attrs.get(Element.COLUMN_STRING_ELEMENT_VALUE);
+                    if ("MFM".equals(val)) {
+                        // Parse extra_attributes for mouseFreeModeHideIds
+                        String extraAttrsJson = (String) attrs.get(Element.COLUMN_STRING_EXTRA_ATTRIBUTES);
+                        if (extraAttrsJson != null && !extraAttrsJson.isEmpty()) {
+                            try {
+                                JsonObject extraAttrs = JsonParser.parseString(extraAttrsJson).getAsJsonObject();
+                                if (extraAttrs.has("mouseFreeModeHideIds")) {
+                                    String idsStr = extraAttrs.get("mouseFreeModeHideIds").getAsString();
+                                    if (!idsStr.isEmpty()) {
+                                        String[] idArray = idsStr.split(",");
+                                        for (String id : idArray) {
+                                            try {
+                                                mouseFreeModeHideElementIds.add(Long.parseLong(id.trim()));
+                                            } catch (NumberFormatException ignored) {}
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        return; // Found legacy MFM, done
+                    }
                 }
             }
         }
@@ -1162,9 +1196,11 @@ public class ElementController {
                             }
                             showToast(context.getString(R.string.mouse_free_mode_activated));
                         } else {
-                            // Exit mouse free mode: normal mouse mode + hide cursor + show elements
-                            controllerManager.getTouchController().setTouchMode(false);
-                            controllerManager.getTouchController().setEnhancedTouch(false);
+                            // Exit mouse free mode: restore user's saved config + hide cursor + show elements
+                            boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
+                            boolean enhancedTouch = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false)));
+                            controllerManager.getTouchController().setTouchMode(touchMode);
+                            controllerManager.getTouchController().setEnhancedTouch(enhancedTouch);
                             game.enableNativeMousePointer(false);
                             // Show previously hidden elements
                             for (Element element : elements) {

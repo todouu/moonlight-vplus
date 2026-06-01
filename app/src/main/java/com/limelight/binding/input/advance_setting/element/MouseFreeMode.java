@@ -45,6 +45,9 @@ public class MouseFreeMode extends Element {
     private List<Long> parsedHideIds = null;
     private Context context;
 
+    private long lastToggleTime = 0;
+    private static final long TOGGLE_DEBOUNCE_MS = 300;
+
     private String text;
     private String value; // comma-separated element IDs to hide
     private int radius;
@@ -185,16 +188,17 @@ public class MouseFreeMode extends Element {
 
         switch (action) {
             case MotionEvent.ACTION_DOWN: {
-                elementController.buttonVibrator();
-                if (isPressed()) {
-                    setPressed(false);
-                    // Deactivate MFM
-                    toggleMouseFreeMode(false);
-                } else {
-                    setPressed(true);
-                    // Activate MFM
-                    toggleMouseFreeMode(true);
+                long now = System.currentTimeMillis();
+                if (now - lastToggleTime < TOGGLE_DEBOUNCE_MS) {
+                    return true; // Ignore rapid double-tap
                 }
+                lastToggleTime = now;
+
+                elementController.buttonVibrator();
+                // Toggle MFM via the centralized handler
+                toggleMouseFreeMode(!elementController.isMouseFreeModeActive());
+                // Sync pressed/visual state with actual MFM state
+                setPressed(elementController.isMouseFreeModeActive());
                 invalidate();
                 return true;
             }
@@ -485,29 +489,7 @@ public class MouseFreeMode extends Element {
             });
         });
 
-        copyButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                ContentValues contentValues = new ContentValues();
-                contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_MOUSE_FREE_MODE);
-                contentValues.put(COLUMN_STRING_ELEMENT_TEXT, text);
-                contentValues.put(COLUMN_STRING_ELEMENT_VALUE, value);
-                contentValues.put(COLUMN_INT_ELEMENT_WIDTH, getElementWidth());
-                contentValues.put(COLUMN_INT_ELEMENT_HEIGHT, getElementHeight());
-                contentValues.put(COLUMN_INT_ELEMENT_LAYER, layer);
-                contentValues.put(COLUMN_INT_ELEMENT_CENTRAL_X, Math.max(Math.min(getElementCentralX() + getElementWidth(), centralXMax), centralXMin));
-                contentValues.put(COLUMN_INT_ELEMENT_CENTRAL_Y, getElementCentralY());
-                contentValues.put(COLUMN_INT_ELEMENT_RADIUS, radius);
-                contentValues.put(COLUMN_INT_ELEMENT_THICK, thick);
-                contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
-                contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
-                contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-                contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, normalTextColor);
-                contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, pressedTextColor);
-                contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, textSizePercent);
-                elementController.addElement(contentValues);
-            }
-        });
+        copyButton.setVisibility(View.GONE); // Only one MFM element should exist per config
 
         deleteButton.setOnClickListener(new OnClickListener() {
             @Override
