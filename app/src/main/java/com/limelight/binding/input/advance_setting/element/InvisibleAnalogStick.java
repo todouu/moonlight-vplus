@@ -689,7 +689,7 @@ public class InvisibleAnalogStick extends Element {
 
             // 编辑模式下显示冲刺阈值圈（方便调整时看到范围）
             if (boostThreshold > 0) {
-                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
                 int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
                 paintStick.setColor(thresholdColor);
                 canvas.drawCircle(getWidth() / 2, getHeight() / 2, boostRadius, paintStick);
@@ -717,7 +717,7 @@ public class InvisibleAnalogStick extends Element {
 
         // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive) {
-            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600; // 橙色，透明度跟摇杆一致
             paintStick.setColor(thresholdColor);
             canvas.drawCircle(circleCenterX, circleCenterY, boostRadius, paintStick);
@@ -769,23 +769,22 @@ public class InvisibleAnalogStick extends Element {
             float xOut = -correlated_x / complete;
             float yOut = correlated_y / complete;   // 前进方向为正
             // 冲刺判定：移动距离（任意方向）超过阈值则触发冲刺键
-            float radiusNormalized = (float) (movement_radius / complete);
-            updateBoost(radiusNormalized);
+            // 阈值从摇杆小圈半径开始计算，不是从中心点0开始
+            float boostTriggerRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            updateBoost((float) movement_radius, boostTriggerRadius);
             notifyOnMovement(xOut, yOut);
         }
     }
 
     /**
-     * 冲刺判定：当摇杆移动距离(0-1)达到阈值时按下冲刺键，低于阈值时松开。
-     * 任意方向推到外圈边缘都可触发。
-     *
-     * @param radiusNormalized 归一化的移动半径，0..1
+     * 冲刺判定：当摇杆移动距离超过阈值圈半径时按下冲刺键，低于时松开。
+     * 阈值圈 = 摇杆小圈半径 + 可调节距离。
      */
-    private void updateBoost(float radiusNormalized) {
+    private void updateBoost(float currentRadius, float triggerRadius) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) {
             return; // 功能关闭
         }
-        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
+        boolean shouldBoost = currentRadius >= triggerRadius;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

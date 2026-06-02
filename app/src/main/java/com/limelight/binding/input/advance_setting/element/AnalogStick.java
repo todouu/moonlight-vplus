@@ -363,7 +363,7 @@ public class AnalogStick extends Element {
 
         // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive && isPressed()) {
-            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
             paintStick.setColor(thresholdColor);
             canvas.drawCircle(radius, radius, boostRadius, paintStick);
@@ -400,7 +400,7 @@ public class AnalogStick extends Element {
 
             // 编辑模式下显示冲刺阈值圈
             if (boostThreshold > 0) {
-                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
                 int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
                 paintStick.setColor(thresholdColor);
                 canvas.drawCircle(radius, radius, boostRadius, paintStick);
@@ -432,15 +432,15 @@ public class AnalogStick extends Element {
         if (stick_state == AnalogStick.STICK_STATE.MOVED_ACTIVE) {
             float xOut = -correlated_x / complete;
             float yOut = correlated_y / complete;
-            float radiusNormalized = (float) (movement_radius / complete);
-            updateBoost(radiusNormalized);
+            float boostTriggerRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            updateBoost((float) movement_radius, boostTriggerRadius);
             notifyOnMovement(xOut, yOut);
         }
     }
 
-    private void updateBoost(float radiusNormalized) {
+    private void updateBoost(float currentRadius, float triggerRadius) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) return;
-        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
+        boolean shouldBoost = currentRadius >= triggerRadius;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);

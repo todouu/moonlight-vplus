@@ -294,8 +294,8 @@ public class InvisibleDigitalStick extends Element {
             @Override
             public void onMovement(float x, float y) {
                 // 冲刺判定：用总移动距离（任意方向推到外圈边缘）
-                float radiusNormalized = (float) Math.sqrt(x * x + y * y);
-                updateBoost(radiusNormalized);
+                float boostTriggerRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                updateBoost((float) movement_radius, boostTriggerRadius);
 
                 if (x < -deadZoneRadius * 0.01 && !leftIsPressed) {
                     leftValueSendHandler.sendEvent(true);
@@ -785,7 +785,7 @@ public class InvisibleDigitalStick extends Element {
 
             // 编辑模式下显示冲刺阈值圈
             if (boostThreshold > 0) {
-                float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+                float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
                 int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
                 paintStick.setColor(thresholdColor);
                 canvas.drawCircle(getWidth() / 2, getHeight() / 2, boostRadius, paintStick);
@@ -813,7 +813,7 @@ public class InvisibleDigitalStick extends Element {
 
         // draw boost threshold circle (disappears when boost is active)
         if (boostThreshold > 0 && !boostActive) {
-            float boostRadius = (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
+            float boostRadius = radius_analog_stick + (radius_complete - radius_analog_stick) * (boostThreshold / 100f);
             int thresholdColor = (normalColor & 0xFF000000) | 0x00FF6600;
             paintStick.setColor(thresholdColor);
             canvas.drawCircle(circleCenterX, circleCenterY, boostRadius, paintStick);
@@ -979,13 +979,13 @@ public class InvisibleDigitalStick extends Element {
     }
 
     /**
-     * 冲刺判定：移动距离(0~1)达到阈值时按下冲刺键(Shift)。
+     * 冲刺判定：移动距离超过阈值圈半径时按下冲刺键(Shift)。
      */
-    private void updateBoost(float radiusNormalized) {
+    private void updateBoost(float currentRadius, float triggerRadius) {
         if (boostThreshold <= 0 || boostKeySendHandler == null) {
             return;
         }
-        boolean shouldBoost = (radiusNormalized * 100f) >= boostThreshold;
+        boolean shouldBoost = currentRadius >= triggerRadius;
         if (shouldBoost && !boostActive) {
             boostActive = true;
             boostKeySendHandler.sendEvent(true);
