@@ -1207,8 +1207,10 @@ public class ElementController {
                     if (down) {
                         mouseFreeModeActive = !mouseFreeModeActive;
                         if (mouseFreeModeActive) {
-                            // 按键显示模式：显示光标 + 显示所有按钮 + 切换到鼠标模式
+                            // 按键显示模式：显示光标 + 显示所有按钮 + 触控板模式
                             game.enableNativeMousePointer(true);
+                            controllerManager.getTouchController().setTouchMode(true);
+                            controllerManager.getTouchController().setEnhancedTouch(false);
                             // Show all elements (restore any previously hidden)
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {
@@ -1219,14 +1221,18 @@ public class ElementController {
                         } else {
                             // 按键隐藏模式：隐藏光标 + 隐藏选中按钮 + 切换到配置的触摸模式
                             game.enableNativeMousePointer(false);
-                            if (mouseFreeModeHideMode == 1) {
-                                // 多点触摸模式
+                            if (mouseFreeModeHideMode == 0) {
+                                // 鼠标模式（经典）
                                 controllerManager.getTouchController().setTouchMode(false);
-                                controllerManager.getTouchController().setEnhancedTouch(true);
-                            } else {
+                                controllerManager.getTouchController().setEnhancedTouch(false);
+                            } else if (mouseFreeModeHideMode == 1) {
                                 // 触控板模式
                                 controllerManager.getTouchController().setTouchMode(true);
                                 controllerManager.getTouchController().setEnhancedTouch(false);
+                            } else {
+                                // 多点触摸模式
+                                controllerManager.getTouchController().setTouchMode(false);
+                                controllerManager.getTouchController().setEnhancedTouch(true);
                             }
                             // Hide user-selected elements
                             for (Element element : elements) {

@@ -1050,6 +1050,7 @@
     <string name="layout_page_edit_text_mfm">Mouse Hide Toggle</string>
     <string name="page_mfm_title">Mouse Hide Toggle</string>
     <string name="mfm_hide_mode_label">Touch mode when buttons hidden</string>
+    <string name="mfm_hide_mode_mouse">Mouse mode</string>
     <string name="mfm_hide_mode_trackpad">Trackpad mode</string>
     <string name="mfm_hide_mode_multitouch">Multi-touch mode</string>
     <string name="page_mfm_select_hide_elements">Select elements to hide</string>

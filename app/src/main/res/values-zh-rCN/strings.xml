@@ -975,6 +975,7 @@
     <string name="layout_page_edit_text_mfm">鼠标按键隐藏切换</string>
     <string name="page_mfm_title">鼠标按键隐藏切换</string>
     <string name="mfm_hide_mode_label">隐藏按键时的触摸模式</string>
+    <string name="mfm_hide_mode_mouse">鼠标模式</string>
     <string name="mfm_hide_mode_trackpad">触控板模式</string>
     <string name="mfm_hide_mode_multitouch">多点触摸模式</string>
     <string name="page_mfm_select_hide_elements">选择隐藏的按键</string>

@@ -457,16 +457,20 @@ public class MouseFreeMode extends Element {
         setupColorPickerButton(normalTextColorElementEditText, () -> this.normalTextColor, this::setElementNormalTextColor);
         setupColorPickerButton(pressedTextColorElementEditText, () -> this.pressedTextColor, this::setElementPressedTextColor);
 
-        // Hide mode selection (trackpad or multi-touch)
+        // Hide mode selection (mouse, trackpad, or multi-touch)
         RadioGroup hideModeRadioGroup = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_hide_mode);
         if (hideModeRadioGroup != null) {
-            if (hideMode == 1) {
+            if (hideMode == 2) {
                 hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_multitouch);
-            } else {
+            } else if (hideMode == 1) {
                 hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_trackpad);
+            } else {
+                hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_mouse);
             }
             hideModeRadioGroup.setOnCheckedChangeListener((group, checkedId) -> {
                 if (checkedId == R.id.page_mouse_free_mode_hide_mode_multitouch) {
+                    hideMode = 2;
+                } else if (checkedId == R.id.page_mouse_free_mode_hide_mode_trackpad) {
                     hideMode = 1;
                 } else {
                     hideMode = 0;
