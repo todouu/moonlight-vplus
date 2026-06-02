@@ -13,6 +13,8 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.SeekBar;
 import android.widget.Toast;
 
@@ -50,6 +52,7 @@ public class MouseFreeMode extends Element {
 
     private String text;
     private String value; // comma-separated element IDs to hide
+    private int hideMode; // 0 = trackpad mode, 1 = multi-touch mode (when buttons are hidden)
     private int radius;
     private int thick;
     private int normalColor;
@@ -125,6 +128,13 @@ public class MouseFreeMode extends Element {
 
         // Parse hide element IDs from value field
         parseHideIds();
+
+        // Load hide mode (0=trackpad, 1=multi-touch)
+        if (attributesMap.containsKey(COLUMN_INT_ELEMENT_MODE)) {
+            hideMode = ((Long) attributesMap.get(COLUMN_INT_ELEMENT_MODE)).intValue();
+        } else {
+            hideMode = 0; // default: trackpad
+        }
     }
 
     private void parseHideIds() {
@@ -147,6 +157,13 @@ public class MouseFreeMode extends Element {
      */
     public List<Long> getHideElementIds() {
         return parsedHideIds;
+    }
+
+    /**
+     * Returns the hide mode: 0 = trackpad, 1 = multi-touch.
+     */
+    public int getHideMode() {
+        return hideMode;
     }
 
     @Override
@@ -241,6 +258,7 @@ public class MouseFreeMode extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, normalTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, pressedTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, textSizePercent);
+        contentValues.put(COLUMN_INT_ELEMENT_MODE, hideMode);
         elementController.updateElement(elementId, contentValues);
     }
 
@@ -439,6 +457,25 @@ public class MouseFreeMode extends Element {
         setupColorPickerButton(normalTextColorElementEditText, () -> this.normalTextColor, this::setElementNormalTextColor);
         setupColorPickerButton(pressedTextColorElementEditText, () -> this.pressedTextColor, this::setElementPressedTextColor);
 
+        // Hide mode selection (trackpad or multi-touch)
+        RadioGroup hideModeRadioGroup = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_hide_mode);
+        if (hideModeRadioGroup != null) {
+            if (hideMode == 1) {
+                hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_multitouch);
+            } else {
+                hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_trackpad);
+            }
+            hideModeRadioGroup.setOnCheckedChangeListener((group, checkedId) -> {
+                if (checkedId == R.id.page_mouse_free_mode_hide_mode_multitouch) {
+                    hideMode = 1;
+                } else {
+                    hideMode = 0;
+                }
+                save();
+                elementController.setMouseFreeModeHideMode(hideMode);
+            });
+        }
+
         // Select elements to hide button
         mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_select_hide_button).setOnClickListener(v -> {
             SuperPagesController superPagesController = elementController.getSuperPagesController();
@@ -595,6 +632,7 @@ public class MouseFreeMode extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, 0xFFFFFFFF);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, 0xFFCCCCCC);
         contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, 25);
+        contentValues.put(COLUMN_INT_ELEMENT_MODE, 0); // 默认触控板模式
         return contentValues;
     }
 

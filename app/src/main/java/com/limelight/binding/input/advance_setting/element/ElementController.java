@@ -127,6 +127,7 @@ public class ElementController {
     // 鼠标自由模式状态
     private boolean mouseFreeModeActive = false;
     private List<Long> mouseFreeModeHideElementIds = new ArrayList<>();
+    private int mouseFreeModeHideMode = 0; // 0=trackpad, 1=multi-touch
 
     // 滚轮按住事件管理
     private Map<Integer, Runnable> mouseScrollRunnableMap = new HashMap<>();
@@ -695,6 +696,10 @@ public class ElementController {
         this.mouseFreeModeHideElementIds = elementIds != null ? elementIds : new ArrayList<>();
     }
 
+    public void setMouseFreeModeHideMode(int mode) {
+        this.mouseFreeModeHideMode = mode;
+    }
+
     public List<Long> getMouseFreeModeHideElementIds() {
         return mouseFreeModeHideElementIds;
     }
@@ -711,6 +716,7 @@ public class ElementController {
     public void initMouseFreeModeFromElements() {
         mouseFreeModeActive = false;
         mouseFreeModeHideElementIds.clear();
+        mouseFreeModeHideMode = 0;
         // First: look for new MouseFreeMode element type
         for (Element element : elements) {
             if (element instanceof MouseFreeMode) {
@@ -718,8 +724,9 @@ public class ElementController {
                 List<Long> mfmIds = mfm.getHideElementIds();
                 if (mfmIds != null && !mfmIds.isEmpty()) {
                     mouseFreeModeHideElementIds.addAll(mfmIds);
-                    return; // Found, done
                 }
+                mouseFreeModeHideMode = mfm.getHideMode();
+                return; // Found, done
             }
         }
         // Fallback: check legacy DigitalSwitchButton with MFM value
@@ -1200,9 +1207,7 @@ public class ElementController {
                     if (down) {
                         mouseFreeModeActive = !mouseFreeModeActive;
                         if (mouseFreeModeActive) {
-                            // Enter mouse free mode: trackpad mode + show cursor + show all elements
-                            controllerManager.getTouchController().setTouchMode(true);
-                            controllerManager.getTouchController().setEnhancedTouch(false);
+                            // 按键显示模式：显示光标 + 显示所有按钮 + 切换到鼠标模式
                             game.enableNativeMousePointer(true);
                             // Show all elements (restore any previously hidden)
                             for (Element element : elements) {
@@ -1212,12 +1217,17 @@ public class ElementController {
                             }
                             showToast(context.getString(R.string.mouse_free_mode_activated));
                         } else {
-                            // Exit mouse free mode: restore user's saved config + hide cursor + hide selected elements
-                            boolean touchMode = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false)));
-                            boolean enhancedTouch = Boolean.parseBoolean((String) controllerManager.getSuperConfigDatabaseHelper().queryConfigAttribute(currentConfigId, PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false)));
-                            controllerManager.getTouchController().setTouchMode(touchMode);
-                            controllerManager.getTouchController().setEnhancedTouch(enhancedTouch);
+                            // 按键隐藏模式：隐藏光标 + 隐藏选中按钮 + 切换到配置的触摸模式
                             game.enableNativeMousePointer(false);
+                            if (mouseFreeModeHideMode == 1) {
+                                // 多点触摸模式
+                                controllerManager.getTouchController().setTouchMode(false);
+                                controllerManager.getTouchController().setEnhancedTouch(true);
+                            } else {
+                                // 触控板模式
+                                controllerManager.getTouchController().setTouchMode(true);
+                                controllerManager.getTouchController().setEnhancedTouch(false);
+                            }
                             // Hide user-selected elements
                             for (Element element : elements) {
                                 if (mouseFreeModeHideElementIds.contains(element.elementId)) {

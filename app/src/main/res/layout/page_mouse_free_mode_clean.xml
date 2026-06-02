@@ -205,6 +205,42 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- Hide mode selection card -->
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/card_background_with_border"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mfm_hide_mode_label"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#E0E0E0"
+                    android:layout_marginBottom="10dp"/>
+
+                <RadioGroup
+                    android:id="@+id/page_mouse_free_mode_hide_mode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp">
+                    <RadioButton
+                        android:id="@+id/page_mouse_free_mode_hide_mode_trackpad"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mfm_hide_mode_trackpad" />
+                    <RadioButton
+                        android:id="@+id/page_mouse_free_mode_hide_mode_multitouch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mfm_hide_mode_multitouch" />
+                </RadioGroup>
+            </LinearLayout>
+
             <!-- Color configuration card -->
             <LinearLayout
                 android:orientation="vertical"
