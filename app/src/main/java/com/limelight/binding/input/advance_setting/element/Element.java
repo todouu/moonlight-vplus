@@ -53,7 +53,7 @@ public abstract class Element extends View {
     public static final int ELEMENT_TYPE_DIGITAL_MOVABLE_BUTTON = 2;
     public static final int ELEMENT_TYPE_DIGITAL_COMBINE_BUTTON = 3;
     public static final int ELEMENT_TYPE_GROUP_BUTTON = 4;
-    public static final int ELEMENT_TYPE_MOUSE_FREE_MODE = 5;
+    public static final int ELEMENT_TYPE_HIDE_BUTTON_MODE = 5;
     public static final int ELEMENT_TYPE_DIGITAL_PAD = 20;
     public static final int ELEMENT_TYPE_ANALOG_STICK = 30;
     public static final int ELEMENT_TYPE_DIGITAL_STICK = 31;

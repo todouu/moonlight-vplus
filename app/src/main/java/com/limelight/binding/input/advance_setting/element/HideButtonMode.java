@@ -39,10 +39,10 @@ import java.util.Map;
  * trackpad mode (free mouse) and normal mouse mode.
  * Stores a list of element IDs to hide when free mode is activated.
  */
-public class MouseFreeMode extends Element {
+public class HideButtonMode extends Element {
 
     private PageDeviceController pageDeviceController;
-    private MouseFreeMode mouseFreeMode;
+    private HideButtonMode hideButtonMode;
     private List<Element> hideElementList = new ArrayList<>();
     private List<Long> parsedHideIds = null;
     private Context context;
@@ -62,7 +62,7 @@ public class MouseFreeMode extends Element {
     private int pressedTextColor;
     private int textSizePercent;
 
-    private SuperPageLayout mouseFreeModeSettingPage;
+    private SuperPageLayout hideButtonModeSettingPage;
     private NumberSeekbar centralXNumberSeekbar;
     private NumberSeekbar centralYNumberSeekbar;
 
@@ -72,13 +72,13 @@ public class MouseFreeMode extends Element {
     private final Paint paintEdit = new Paint();
     private final RectF rect = new RectF();
 
-    public MouseFreeMode(Map<String, Object> attributesMap,
+    public HideButtonMode(Map<String, Object> attributesMap,
                          ElementController controller,
                          PageDeviceController pageDeviceController,
                          Context context) {
         super(attributesMap, controller, context);
         this.pageDeviceController = pageDeviceController;
-        this.mouseFreeMode = this;
+        this.hideButtonMode = this;
         this.context = context;
 
         DisplayMetrics displayMetrics = new DisplayMetrics();
@@ -213,9 +213,9 @@ public class MouseFreeMode extends Element {
 
                 elementController.buttonVibrator();
                 // Toggle MFM via the centralized handler
-                toggleMouseFreeMode();
-                // Sync pressed/visual state with actual MFM state
-                setPressed(elementController.isMouseFreeModeActive());
+                toggleHideButtonMode();
+                // Sync pressed/visual state with actual state
+                setPressed(elementController.isHideButtonModeActive());
                 invalidate();
                 return true;
             }
@@ -232,7 +232,7 @@ public class MouseFreeMode extends Element {
         return true;
     }
 
-    private void toggleMouseFreeMode() {
+    private void toggleHideButtonMode() {
         // Delegate to the MFM handler in ElementController for consistent behavior
         ElementController.SendEventHandler handler = elementController.getSendEventHandler("MFM");
         if (handler != null) {
@@ -264,7 +264,7 @@ public class MouseFreeMode extends Element {
 
     @Override
     protected void updatePage() {
-        if (mouseFreeModeSettingPage != null) {
+        if (hideButtonModeSettingPage != null) {
             centralXNumberSeekbar.setValueWithNoCallBack(getElementCentralX());
             centralYNumberSeekbar.setValueWithNoCallBack(getElementCentralY());
         }
@@ -272,26 +272,26 @@ public class MouseFreeMode extends Element {
 
     @Override
     protected SuperPageLayout getInfoPage() {
-        if (mouseFreeModeSettingPage == null) {
-            mouseFreeModeSettingPage = (SuperPageLayout) LayoutInflater.from(getContext()).inflate(R.layout.page_mouse_free_mode_clean, null);
-            centralXNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_x);
-            centralYNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_y);
+        if (hideButtonModeSettingPage == null) {
+            hideButtonModeSettingPage = (SuperPageLayout) LayoutInflater.from(getContext()).inflate(R.layout.page_mouse_free_mode_clean, null);
+            centralXNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_x);
+            centralYNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_central_y);
         }
 
-        NumberSeekbar widthNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_width);
-        NumberSeekbar heightNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_height);
-        NumberSeekbar radiusNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_radius);
-        ElementEditText textElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_text);
-        NumberSeekbar thickNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_thick);
-        NumberSeekbar layerNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_layer);
-        ElementEditText normalColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_color);
-        ElementEditText pressedColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_color);
-        ElementEditText backgroundColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_background_color);
-        NumberSeekbar textSizeNumberSeekbar = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_text_size);
-        ElementEditText normalTextColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_text_color);
-        ElementEditText pressedTextColorElementEditText = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_text_color);
-        Button copyButton = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_copy);
-        Button deleteButton = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_delete);
+        NumberSeekbar widthNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_width);
+        NumberSeekbar heightNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_height);
+        NumberSeekbar radiusNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_radius);
+        ElementEditText textElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_text);
+        NumberSeekbar thickNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_thick);
+        NumberSeekbar layerNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_layer);
+        ElementEditText normalColorElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_color);
+        ElementEditText pressedColorElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_color);
+        ElementEditText backgroundColorElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_background_color);
+        NumberSeekbar textSizeNumberSeekbar = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_text_size);
+        ElementEditText normalTextColorElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_normal_text_color);
+        ElementEditText pressedTextColorElementEditText = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_pressed_text_color);
+        Button copyButton = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_copy);
+        Button deleteButton = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_delete);
 
         textElementEditText.setTextWithNoTextChangedCallBack(text);
         textElementEditText.setOnTextChangedListener(new ElementEditText.OnTextChangedListener() {
@@ -458,7 +458,7 @@ public class MouseFreeMode extends Element {
         setupColorPickerButton(pressedTextColorElementEditText, () -> this.pressedTextColor, this::setElementPressedTextColor);
 
         // Hide mode selection (mouse, trackpad, or multi-touch)
-        RadioGroup hideModeRadioGroup = mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_hide_mode);
+        RadioGroup hideModeRadioGroup = hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_hide_mode);
         if (hideModeRadioGroup != null) {
             if (hideMode == 2) {
                 hideModeRadioGroup.check(R.id.page_mouse_free_mode_hide_mode_multitouch);
@@ -476,17 +476,17 @@ public class MouseFreeMode extends Element {
                     hideMode = 0;
                 }
                 save();
-                elementController.setMouseFreeModeHideMode(hideMode);
+                elementController.setHideButtonModeHideMode(hideMode);
             });
         }
 
         // Select elements to hide button
-        mouseFreeModeSettingPage.findViewById(R.id.page_mouse_free_mode_select_hide_button).setOnClickListener(v -> {
+        hideButtonModeSettingPage.findViewById(R.id.page_mouse_free_mode_select_hide_button).setOnClickListener(v -> {
             SuperPagesController superPagesController = elementController.getSuperPagesController();
 
             // Load saved hide element list
             hideElementList.clear();
-            List<Long> savedIds = elementController.getMouseFreeModeHideElementIds();
+            List<Long> savedIds = elementController.getHideButtonModeHideElementIds();
             for (Element element : elementController.getElements()) {
                 if (savedIds.contains(element.elementId)) {
                     hideElementList.add(element);
@@ -496,8 +496,8 @@ public class MouseFreeMode extends Element {
             // Enter select mode
             elementController.changeMode(ElementController.Mode.Select);
             ElementSelectedCallBack elementSelectedCallBack = element -> {
-                if (element == mouseFreeMode) {
-                    Toast.makeText(getContext(), getContext().getString(R.string.mouse_free_mode_cannot_select_self), Toast.LENGTH_SHORT).show();
+                if (element == hideButtonMode) {
+                    Toast.makeText(getContext(), getContext().getString(R.string.hide_button_mode_cannot_select_self), Toast.LENGTH_SHORT).show();
                     return;
                 }
                 if (hideElementList.contains(element)) {
@@ -535,12 +535,12 @@ public class MouseFreeMode extends Element {
         deleteButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                elementController.toggleInfoPage(mouseFreeModeSettingPage);
-                elementController.deleteElement(mouseFreeMode);
+                elementController.toggleInfoPage(hideButtonModeSettingPage);
+                elementController.deleteElement(hideButtonMode);
             }
         });
 
-        return mouseFreeModeSettingPage;
+        return hideButtonModeSettingPage;
     }
 
     /**
@@ -570,7 +570,7 @@ public class MouseFreeMode extends Element {
         for (Element element : hideElementList) {
             ids.add(element.elementId);
         }
-        elementController.setMouseFreeModeHideElements(ids);
+        elementController.setHideButtonModeHideElements(ids);
     }
 
     protected void setElementText(String text) {

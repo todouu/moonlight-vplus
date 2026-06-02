@@ -68,7 +68,7 @@ public class ElementController {
     private static final String SPECIAL_KEY_PAN_ZOOM_MODE = "PZM";
     private static final String SPECIAL_KEY_OPEN_GAME_MENU = "OGM";
     private static final String SPECIAL_KEY_EDIT_MODE_SWITCH = "EMS"; // 编辑模式
-    private static final String SPECIAL_KEY_MOUSE_FREE_MODE = "MFM"; // 鼠标自由模式
+    private static final String SPECIAL_KEY_HIDE_BUTTON_MODE = "MFM"; // 隐藏按键模式
 
 
 
@@ -124,10 +124,10 @@ public class ElementController {
     private boolean gameVibrator = false;
     private boolean buttonVibrator = false;
 
-    // 鼠标自由模式状态
-    private boolean mouseFreeModeActive = false;
-    private List<Long> mouseFreeModeHideElementIds = new ArrayList<>();
-    private int mouseFreeModeHideMode = 0; // 0=trackpad, 1=multi-touch
+    // 隐藏按键模式状态
+    private boolean hideButtonModeActive = false;
+    private List<Long> hideButtonModeElementIds = new ArrayList<>();
+    private int hideButtonModeHideMode = 0; // 0=mouse, 1=trackpad, 2=multi-touch
 
     // 滚轮按住事件管理
     private Map<Integer, Runnable> mouseScrollRunnableMap = new HashMap<>();
@@ -318,17 +318,17 @@ public class ElementController {
                 addElement(contentValues);
             }
         });
-        pageEdit.findViewById(R.id.page_edit_add_mouse_free_mode).setOnClickListener(new View.OnClickListener() {
+        pageEdit.findViewById(R.id.page_edit_add_hide_button_mode).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Only allow one MouseFreeMode element per config
+                // Only allow one HideButtonMode element per config
                 for (Element element : elements) {
-                    if (element instanceof MouseFreeMode) {
-                        showToast(context.getString(R.string.mouse_free_mode_already_exists));
+                    if (element instanceof HideButtonMode) {
+                        showToast(context.getString(R.string.hide_button_mode_already_exists));
                         return;
                     }
                 }
-                ContentValues contentValues = MouseFreeMode.getInitialInfo();
+                ContentValues contentValues = HideButtonMode.getInitialInfo();
                 addElement(contentValues);
             }
         });
@@ -364,9 +364,9 @@ public class ElementController {
 
     public void loadAllElement(Long configId) {
         // If free mode was active, restore mouse state before loading new config
-        if (mouseFreeModeActive) {
+        if (hideButtonModeActive) {
             game.enableNativeMousePointer(false);
-            mouseFreeModeActive = false;
+            hideButtonModeActive = false;
         }
 
         currentConfigId = configId;
@@ -395,12 +395,12 @@ public class ElementController {
         }
 
         // 初始化鼠标自由模式的隐藏元素列表
-        initMouseFreeModeFromElements();
+        initHideButtonModeFromElements();
 
         // 正常状态（MFM 未激活）下隐藏选中的按钮
-        if (!mouseFreeModeActive && !mouseFreeModeHideElementIds.isEmpty()) {
+        if (!hideButtonModeActive && !hideButtonModeElementIds.isEmpty()) {
             for (Element element : elements) {
-                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                if (hideButtonModeElementIds.contains(element.elementId)) {
                     element.setVisibility(View.GONE);
                 }
             }
@@ -467,8 +467,8 @@ public class ElementController {
                         controllerManager.getSuperPagesController(),
                         context);
                 break;
-            case Element.ELEMENT_TYPE_MOUSE_FREE_MODE:
-                element = new MouseFreeMode(attributesMap,
+            case Element.ELEMENT_TYPE_HIDE_BUTTON_MODE:
+                element = new HideButtonMode(attributesMap,
                         this,
                         pageDeviceController,
                         context);
@@ -692,40 +692,40 @@ public class ElementController {
         return elements;
     }
 
-    public void setMouseFreeModeHideElements(List<Long> elementIds) {
-        this.mouseFreeModeHideElementIds = elementIds != null ? elementIds : new ArrayList<>();
+    public void setHideButtonModeHideElements(List<Long> elementIds) {
+        this.hideButtonModeElementIds = elementIds != null ? elementIds : new ArrayList<>();
     }
 
-    public void setMouseFreeModeHideMode(int mode) {
-        this.mouseFreeModeHideMode = mode;
+    public void setHideButtonModeHideMode(int mode) {
+        this.hideButtonModeHideMode = mode;
     }
 
-    public List<Long> getMouseFreeModeHideElementIds() {
-        return mouseFreeModeHideElementIds;
+    public List<Long> getHideButtonModeHideElementIds() {
+        return hideButtonModeElementIds;
     }
 
-    public boolean isMouseFreeModeActive() {
-        return mouseFreeModeActive;
+    public boolean isHideButtonModeActive() {
+        return hideButtonModeActive;
     }
 
     /**
      * Initialize mouse free mode hide element list.
-     * Looks for MouseFreeMode elements first, then falls back to DigitalSwitchButton with MFM value
+     * Looks for HideButtonMode elements first, then falls back to DigitalSwitchButton with MFM value
      * for backward compatibility.
      */
-    public void initMouseFreeModeFromElements() {
-        mouseFreeModeActive = false;
-        mouseFreeModeHideElementIds.clear();
-        mouseFreeModeHideMode = 0;
-        // First: look for new MouseFreeMode element type
+    public void initHideButtonModeFromElements() {
+        hideButtonModeActive = false;
+        hideButtonModeElementIds.clear();
+        hideButtonModeHideMode = 0;
+        // First: look for new HideButtonMode element type
         for (Element element : elements) {
-            if (element instanceof MouseFreeMode) {
-                MouseFreeMode mfm = (MouseFreeMode) element;
+            if (element instanceof HideButtonMode) {
+                HideButtonMode mfm = (HideButtonMode) element;
                 List<Long> mfmIds = mfm.getHideElementIds();
                 if (mfmIds != null && !mfmIds.isEmpty()) {
-                    mouseFreeModeHideElementIds.addAll(mfmIds);
+                    hideButtonModeElementIds.addAll(mfmIds);
                 }
-                mouseFreeModeHideMode = mfm.getHideMode();
+                hideButtonModeHideMode = mfm.getHideMode();
                 return; // Found, done
             }
         }
@@ -737,7 +737,7 @@ public class ElementController {
                 if (attrs != null) {
                     String val = (String) attrs.get(Element.COLUMN_STRING_ELEMENT_VALUE);
                     if ("MFM".equals(val)) {
-                        // Parse extra_attributes for mouseFreeModeHideIds
+                        // Parse extra_attributes for hideButtonModeHideIds (legacy compat)
                         String extraAttrsJson = (String) attrs.get(Element.COLUMN_STRING_EXTRA_ATTRIBUTES);
                         if (extraAttrsJson != null && !extraAttrsJson.isEmpty()) {
                             try {
@@ -748,7 +748,7 @@ public class ElementController {
                                         String[] idArray = idsStr.split(",");
                                         for (String id : idArray) {
                                             try {
-                                                mouseFreeModeHideElementIds.add(Long.parseLong(id.trim()));
+                                                hideButtonModeElementIds.add(Long.parseLong(id.trim()));
                                             } catch (NumberFormatException ignored) {}
                                         }
                                     }
@@ -1200,32 +1200,32 @@ public class ElementController {
 
                 }
             };
-        } else if (key.equals(SPECIAL_KEY_MOUSE_FREE_MODE)) {
+        } else if (key.equals(SPECIAL_KEY_HIDE_BUTTON_MODE)) {
             return new SendEventHandler() {
                 @Override
                 public void sendEvent(boolean down) {
                     if (down) {
-                        mouseFreeModeActive = !mouseFreeModeActive;
-                        if (mouseFreeModeActive) {
+                        hideButtonModeActive = !hideButtonModeActive;
+                        if (hideButtonModeActive) {
                             // 按键显示模式：显示光标 + 显示所有按钮 + 触控板模式
                             game.enableNativeMousePointer(true);
                             controllerManager.getTouchController().setTouchMode(true);
                             controllerManager.getTouchController().setEnhancedTouch(false);
                             // Show all elements (restore any previously hidden)
                             for (Element element : elements) {
-                                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                                if (hideButtonModeElementIds.contains(element.elementId)) {
                                     element.setVisibility(View.VISIBLE);
                                 }
                             }
-                            showToast(context.getString(R.string.mouse_free_mode_activated));
+                            showToast(context.getString(R.string.hide_button_mode_activated));
                         } else {
                             // 按键隐藏模式：隐藏光标 + 隐藏选中按钮 + 切换到配置的触摸模式
                             game.enableNativeMousePointer(false);
-                            if (mouseFreeModeHideMode == 0) {
+                            if (hideButtonModeHideMode == 0) {
                                 // 鼠标模式（经典）
                                 controllerManager.getTouchController().setTouchMode(false);
                                 controllerManager.getTouchController().setEnhancedTouch(false);
-                            } else if (mouseFreeModeHideMode == 1) {
+                            } else if (hideButtonModeHideMode == 1) {
                                 // 触控板模式
                                 controllerManager.getTouchController().setTouchMode(true);
                                 controllerManager.getTouchController().setEnhancedTouch(false);
@@ -1236,11 +1236,11 @@ public class ElementController {
                             }
                             // Hide user-selected elements
                             for (Element element : elements) {
-                                if (mouseFreeModeHideElementIds.contains(element.elementId)) {
+                                if (hideButtonModeElementIds.contains(element.elementId)) {
                                     element.setVisibility(View.GONE);
                                 }
                             }
-                            showToast(context.getString(R.string.mouse_free_mode_deactivated));
+                            showToast(context.getString(R.string.hide_button_mode_deactivated));
                         }
                     }
                 }
