@@ -620,7 +620,7 @@ public class HideButtonMode extends Element {
 
     public static ContentValues getInitialInfo() {
         ContentValues contentValues = new ContentValues();
-        contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_MOUSE_FREE_MODE);
+        contentValues.put(COLUMN_INT_ELEMENT_TYPE, ELEMENT_TYPE_HIDE_BUTTON_MODE);
         contentValues.put(COLUMN_STRING_ELEMENT_TEXT, "MFM");
         contentValues.put(COLUMN_STRING_ELEMENT_VALUE, "-1");
         contentValues.put(COLUMN_INT_ELEMENT_WIDTH, 100);
