@@ -152,6 +152,7 @@ public class AnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
+    private StickSwipTrigger specialButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -261,6 +262,7 @@ public class AnalogStick extends Element {
             System.out.println("加载按摇杆时发生错误，已应用默认值: " + e.getMessage());
         }
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
+        specialButton = new StickSwipTrigger(attributesMap, controller);
         radius_complete = getPercent(radius, 100) - 2 * thick;
         radius_dead_zone = getPercent(radius, deadZoneRadius);
         radius_analog_stick = getPercent(radius, 20);
@@ -275,7 +277,7 @@ public class AnalogStick extends Element {
 
             @Override
             public void onClick() {
-                elementController.buttonVibrator();
+                specialButton.onStickPressed();
             }
 
             @Override
@@ -358,6 +360,8 @@ public class AnalogStick extends Element {
             canvas.drawRect(rect, paintEdit);
 
         }
+
+        specialButton.drawTriggerPreview(canvas, radius, radius, radius_complete);
     }
 
     private void updatePosition(long eventTime) {
@@ -409,6 +413,7 @@ public class AnalogStick extends Element {
 
         // get radius and angel of movement from center
         movement_radius = getMovementRadius(relative_x, relative_y);
+        double rawMovementRadius = movement_radius;
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
@@ -455,8 +460,10 @@ public class AnalogStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
+            specialButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = AnalogStick.STICK_STATE.NO_MOVEMENT;
+            specialButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick
@@ -479,9 +486,12 @@ public class AnalogStick extends Element {
 
         NumberSeekbar radiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_radius);
         TextView middleValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_middle_value);
+        TextView specialValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_special_value);
+        Switch stickPressVibrationSwitch = analogStickPage.findViewById(R.id.page_analog_stick_press_vibration);
         RadioGroup modeRadioGroup = analogStickPage.findViewById(R.id.page_analog_stick_value);
         Switch moveModeSwitch = analogStickPage.findViewById(R.id.page_analog_stick_move_mode);
         NumberSeekbar deadZoneRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_sense);
+        NumberSeekbar specialTriggerRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_layer);
         ElementEditText normalColorEditText = analogStickPage.findViewById(R.id.page_analog_stick_normal_color);
@@ -524,6 +534,7 @@ public class AnalogStick extends Element {
                 save();
             }
         });
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -660,6 +671,7 @@ public class AnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
                 contentValues.put(COLUMN_INT_ELEMENT_MODE, moveMode);
+                specialButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -693,6 +705,7 @@ public class AnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
         contentValues.put(COLUMN_INT_ELEMENT_MODE, moveMode);
+        specialButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }

@@ -16,6 +16,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import com.limelight.Game;
@@ -146,6 +147,7 @@ public class InvisibleDigitalStick extends Element {
     private ElementController.SendEventHandler downValueSendHandler;
     private ElementController.SendEventHandler leftValueSendHandler;
     private ElementController.SendEventHandler rightValueSendHandler;
+    private StickSwipTrigger specialButton;
     private String middleValue;
     private String upValue;
     private String downValue;
@@ -260,6 +262,7 @@ public class InvisibleDigitalStick extends Element {
         downValueSendHandler = controller.getSendEventHandler(downValue);
         leftValueSendHandler = controller.getSendEventHandler(leftValue);
         rightValueSendHandler = controller.getSendEventHandler(rightValue);
+        specialButton = new StickSwipTrigger(attributesMap, controller);
 
         listener = new InvisibleDigitalStickListener() {
             @Override
@@ -296,7 +299,7 @@ public class InvisibleDigitalStick extends Element {
 
             @Override
             public void onClick() {
-                elementController.buttonVibrator();
+                specialButton.onStickPressed();
             }
 
             @Override
@@ -352,7 +355,10 @@ public class InvisibleDigitalStick extends Element {
         TextView downValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_down_value);
         TextView leftValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_left_value);
         TextView rightValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_right_value);
+        TextView specialValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_special_value);
+        Switch stickPressVibrationSwitch = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_press_vibration);
         NumberSeekbar senseNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_sense);
+        NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_thick);
         NumberSeekbar layerNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_layer);
         ElementEditText normalColorEditText = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_normal_color);
@@ -442,6 +448,7 @@ public class InvisibleDigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -624,6 +631,7 @@ public class InvisibleDigitalStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                specialButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -659,6 +667,7 @@ public class InvisibleDigitalStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        specialButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -708,6 +717,8 @@ public class InvisibleDigitalStick extends Element {
 
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
+
+            specialButton.drawTriggerPreview(canvas, getWidth() / 2f, getHeight() / 2f, radius_complete);
         }
 
         if (!isPressed()) {
@@ -789,6 +800,7 @@ public class InvisibleDigitalStick extends Element {
 
         // get radius and angel of movement from center
         movement_radius = getMovementRadius(relative_x, relative_y);
+        double rawMovementRadius = movement_radius;
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
@@ -833,8 +845,10 @@ public class InvisibleDigitalStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
+            specialButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = InvisibleDigitalStick.STICK_STATE.NO_MOVEMENT;
+            specialButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick
