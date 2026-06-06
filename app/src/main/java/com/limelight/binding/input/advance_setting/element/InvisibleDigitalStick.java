@@ -718,7 +718,7 @@ public class InvisibleDigitalStick extends Element {
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
 
-            specialButton.drawTriggerPreview(canvas, circleCenterX, circleCenterY, radius_complete);
+            specialButton.drawTriggerPreview(canvas, getWidth() / 2f, getHeight() / 2f, radius_complete);
         }
 
         if (!isPressed()) {
