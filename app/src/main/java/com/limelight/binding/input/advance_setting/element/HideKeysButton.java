@@ -741,9 +741,17 @@ public class HideKeysButton extends Element {
                 break;
             case Edit:
                 setEditColor(EDIT_COLOR_EDIT);
+                // 进入编辑模式时临时显示所有子按键，方便用户查看已选中的按键
+                for (Element child : childElementList) {
+                    child.setVisibility(VISIBLE);
+                }
                 break;
             case Normal:
                 setEditColor(EDIT_COLOR_EDIT);
+                // 退出编辑模式时恢复子按键的实际存储状态
+                for (Element child : childElementList) {
+                    child.setVisibility(childVisibility);
+                }
                 break;
         }
     }
