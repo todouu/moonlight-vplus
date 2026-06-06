@@ -148,7 +148,7 @@ public class InvisibleAnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
-    private StickSpecialButton specialButton;
+    private StickSwipTrigger specialButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -251,7 +251,7 @@ public class InvisibleAnalogStick extends Element {
         middleValue = (String) attributesMap.get(COLUMN_STRING_ELEMENT_MIDDLE_VALUE);
         valueSendHandler = controller.getSendEventHandler(value);
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
-        specialButton = new StickSpecialButton(attributesMap, controller);
+        specialButton = new StickSwipTrigger(attributesMap, controller);
 
         listener = new InvisibleAnalogStickListener() {
             @Override

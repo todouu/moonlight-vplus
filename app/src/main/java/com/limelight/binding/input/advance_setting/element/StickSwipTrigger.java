@@ -17,7 +17,7 @@ import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
 
 import java.util.Map;
 
-final class StickSpecialButton {
+final class StickSwipTrigger {
     static final String ATTR_VALUE = "stickSpecialValue";
     static final String ATTR_TRIGGER_RADIUS_PERCENT = "stickSpecialTriggerRadiusPercent";
     static final String ATTR_STICK_PRESS_VIBRATION_ENABLED = "stickPressVibrationEnabled";
@@ -41,7 +41,7 @@ final class StickSpecialButton {
     private boolean previewing;
     private int previewRadiusPercent = DEFAULT_TRIGGER_RADIUS_PERCENT;
 
-    StickSpecialButton(Map<String, Object> attributesMap, ElementController elementController) {
+    StickSwipTrigger(Map<String, Object> attributesMap, ElementController elementController) {
         this.elementController = elementController;
         this.extraAttributes = parseExtraAttributes(attributesMap.get(Element.COLUMN_STRING_EXTRA_ATTRIBUTES));
         previewPaint.setStyle(Paint.Style.STROKE);

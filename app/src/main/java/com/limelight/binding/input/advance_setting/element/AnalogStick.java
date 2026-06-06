@@ -152,7 +152,7 @@ public class AnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
-    private StickSpecialButton specialButton;
+    private StickSwipTrigger specialButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -262,7 +262,7 @@ public class AnalogStick extends Element {
             System.out.println("加载按摇杆时发生错误，已应用默认值: " + e.getMessage());
         }
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
-        specialButton = new StickSpecialButton(attributesMap, controller);
+        specialButton = new StickSwipTrigger(attributesMap, controller);
         radius_complete = getPercent(radius, 100) - 2 * thick;
         radius_dead_zone = getPercent(radius, deadZoneRadius);
         radius_analog_stick = getPercent(radius, 20);

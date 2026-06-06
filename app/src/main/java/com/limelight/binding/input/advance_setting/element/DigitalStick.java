@@ -145,7 +145,7 @@ public class DigitalStick extends Element {
     private ElementController.SendEventHandler downValueSendHandler;
     private ElementController.SendEventHandler leftValueSendHandler;
     private ElementController.SendEventHandler rightValueSendHandler;
-    private StickSpecialButton specialButton;
+    private StickSwipTrigger specialButton;
     private String middleValue;
     private String upValue;
     private String downValue;
@@ -256,7 +256,7 @@ public class DigitalStick extends Element {
         downValueSendHandler = controller.getSendEventHandler(downValue);
         leftValueSendHandler = controller.getSendEventHandler(leftValue);
         rightValueSendHandler = controller.getSendEventHandler(rightValue);
-        specialButton = new StickSpecialButton(attributesMap, controller);
+        specialButton = new StickSwipTrigger(attributesMap, controller);
 
         radius_complete = getPercent(radius, 100) - 2 * thick;
         radius_dead_zone = getPercent(radius, deadZoneRadius);

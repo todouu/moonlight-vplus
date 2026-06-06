@@ -1282,8 +1282,8 @@
     <string name="seekbar_decrease">Decrease</string>
     <string name="seekbar_increase">Increase</string>
 
-    <string name="crown_stick_special_value">Special Button</string>
+    <string name="crown_stick_special_value">Swip Trigger</string>
     <string name="crown_stick_special_default">None</string>
     <string name="crown_stick_press_vibration">Vibrate On Stick Press</string>
-    <string name="crown_stick_special_trigger_radius">Special Trigger Radius % (100 = Off)</string>
+    <string name="crown_stick_special_trigger_radius">Swip Trigger Radius % (100 = Off)</string>
 </resources>
