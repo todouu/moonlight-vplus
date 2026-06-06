@@ -144,6 +144,49 @@
                         android:textSize="15sp"
                         android:textStyle="bold"/>
                 </LinearLayout>
+
+                <LinearLayout
+                    android:orientation="vertical"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/crown_stick_special_value"
+                        android:textSize="12sp"
+                        android:textColor="#B3FFFFFF"
+                        android:layout_marginBottom="6dp"/>
+                    <TextView
+                        android:id="@+id/page_digital_stick_special_value"
+                        android:layout_width="match_parent"
+                        android:layout_height="42dp"
+                        android:gravity="center"
+                        android:text="@string/crown_stick_special_default"
+                        android:background="@drawable/crown_config_input_bg"
+                        android:textSize="15sp"
+                        android:textStyle="bold"/>
+                </LinearLayout>
+
+                <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
+                    android:id="@+id/page_digital_stick_special_hit_radius"
+                    android:layout_width="match_parent"
+                    android:layout_height="58dp"
+                    android:layout_marginTop="8dp"
+                    app:text="@string/crown_stick_special_hit_radius"
+                    app:max="300"
+                    app:min="100"
+                    app:progress="130" />
+
+                <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
+                    android:id="@+id/page_digital_stick_special_trigger_radius"
+                    android:layout_width="match_parent"
+                    android:layout_height="58dp"
+                    android:layout_marginTop="6dp"
+                    app:text="@string/crown_stick_special_trigger_radius"
+                    app:max="300"
+                    app:min="100"
+                    app:progress="120" />
             </LinearLayout>
             
             <!-- 位置和尺寸卡片 -->

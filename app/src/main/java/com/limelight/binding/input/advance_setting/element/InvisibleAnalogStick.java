@@ -147,6 +147,7 @@ public class InvisibleAnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
+    private StickSpecialButton specialButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -249,6 +250,7 @@ public class InvisibleAnalogStick extends Element {
         middleValue = (String) attributesMap.get(COLUMN_STRING_ELEMENT_MIDDLE_VALUE);
         valueSendHandler = controller.getSendEventHandler(value);
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
+        specialButton = new StickSpecialButton(attributesMap, controller);
 
         listener = new InvisibleAnalogStickListener() {
             @Override
@@ -258,7 +260,6 @@ public class InvisibleAnalogStick extends Element {
 
             @Override
             public void onClick() {
-                elementController.buttonVibrator();
             }
 
             @Override
@@ -311,7 +312,10 @@ public class InvisibleAnalogStick extends Element {
         NumberSeekbar radiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_radius);
         RadioGroup valueRadioGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_value);
         TextView middleValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_middle_value);
+        TextView specialValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
         NumberSeekbar senseNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_sense);
+        NumberSeekbar specialHitRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_hit_radius);
+        NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_layer);
         ElementEditText normalColorEditText = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_normal_color);
@@ -347,6 +351,7 @@ public class InvisibleAnalogStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
+        specialButton.bind(specialValueTextView, specialHitRadiusNumberSeekbar, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -525,6 +530,7 @@ public class InvisibleAnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                specialButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -557,6 +563,7 @@ public class InvisibleAnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        specialButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -687,10 +694,11 @@ public class InvisibleAnalogStick extends Element {
 
         // get radius and angel of movement from center
         movement_radius = getMovementRadius(relative_x, relative_y);
+        double rawMovementRadius = movement_radius;
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
-        if (movement_radius > radius_complete && !isPressed())
+        if (rawMovementRadius > specialButton.getHitRadius(radius_complete) && !isPressed())
             return false;
 
         // chop radius if out of outer circle or near the edge
@@ -731,8 +739,10 @@ public class InvisibleAnalogStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
+            specialButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = InvisibleAnalogStick.STICK_STATE.NO_MOVEMENT;
+            specialButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick

@@ -144,6 +144,7 @@ public class DigitalStick extends Element {
     private ElementController.SendEventHandler downValueSendHandler;
     private ElementController.SendEventHandler leftValueSendHandler;
     private ElementController.SendEventHandler rightValueSendHandler;
+    private StickSpecialButton specialButton;
     private String middleValue;
     private String upValue;
     private String downValue;
@@ -254,6 +255,7 @@ public class DigitalStick extends Element {
         downValueSendHandler = controller.getSendEventHandler(downValue);
         leftValueSendHandler = controller.getSendEventHandler(leftValue);
         rightValueSendHandler = controller.getSendEventHandler(rightValue);
+        specialButton = new StickSpecialButton(attributesMap, controller);
 
         radius_complete = getPercent(radius, 100) - 2 * thick;
         radius_dead_zone = getPercent(radius, deadZoneRadius);
@@ -294,7 +296,6 @@ public class DigitalStick extends Element {
 
             @Override
             public void onClick() {
-                elementController.buttonVibrator();
             }
 
             @Override
@@ -416,10 +417,11 @@ public class DigitalStick extends Element {
 
         // get radius and angel of movement from center
         movement_radius = getMovementRadius(relative_x, relative_y);
+        double rawMovementRadius = movement_radius;
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
-        if (movement_radius > radius_complete && !isPressed())
+        if (rawMovementRadius > specialButton.getHitRadius(radius_complete) && !isPressed())
             return false;
 
         // chop radius if out of outer circle or near the edge
@@ -459,8 +461,10 @@ public class DigitalStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
+            specialButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = DigitalStick.STICK_STATE.NO_MOVEMENT;
+            specialButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick
@@ -487,7 +491,10 @@ public class DigitalStick extends Element {
         TextView downValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_down_value);
         TextView leftValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_left_value);
         TextView rightValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_right_value);
+        TextView specialValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_special_value);
         NumberSeekbar deadZoneRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_sense);
+        NumberSeekbar specialHitRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_hit_radius);
+        NumberSeekbar specialTriggerRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_thick);
         NumberSeekbar layerNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_layer);
         ElementEditText normalColorEditText = digitalStickPage.findViewById(R.id.page_digital_stick_normal_color);
@@ -577,6 +584,7 @@ public class DigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
+        specialButton.bind(specialValueTextView, specialHitRadiusNumberSeekbar, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -717,6 +725,7 @@ public class DigitalStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                specialButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -752,6 +761,7 @@ public class DigitalStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        specialButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }
