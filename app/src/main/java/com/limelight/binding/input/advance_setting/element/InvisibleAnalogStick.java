@@ -18,6 +18,7 @@ import android.widget.Button;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import com.limelight.Game;
@@ -260,6 +261,7 @@ public class InvisibleAnalogStick extends Element {
 
             @Override
             public void onClick() {
+                specialButton.onStickPressed();
             }
 
             @Override
@@ -313,8 +315,8 @@ public class InvisibleAnalogStick extends Element {
         RadioGroup valueRadioGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_value);
         TextView middleValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_middle_value);
         TextView specialValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
+        Switch stickPressVibrationSwitch = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_press_vibration);
         NumberSeekbar senseNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_sense);
-        NumberSeekbar specialHitRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_hit_radius);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_layer);
@@ -351,7 +353,7 @@ public class InvisibleAnalogStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, specialHitRadiusNumberSeekbar, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -613,6 +615,8 @@ public class InvisibleAnalogStick extends Element {
 
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
+
+            specialButton.drawTriggerPreview(canvas, circleCenterX, circleCenterY, radius_complete);
         }
 
         if (!isPressed()) {
@@ -698,7 +702,7 @@ public class InvisibleAnalogStick extends Element {
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
-        if (rawMovementRadius > specialButton.getHitRadius(radius_complete) && !isPressed())
+        if (movement_radius > radius_complete && !isPressed())
             return false;
 
         // chop radius if out of outer circle or near the edge

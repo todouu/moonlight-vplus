@@ -116,15 +116,22 @@
                         android:background="@drawable/enabled_square" />
                 </LinearLayout>
 
-                <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_invisible_analog_stick_special_hit_radius"
+                <LinearLayout
+                    android:orientation="horizontal"
                     android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginVertical="4dp"
-                    app:text="@string/crown_stick_special_hit_radius"
-                    app:max="300"
-                    app:min="100"
-                    app:progress="130"/>
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/crown_stick_press_vibration"/>
+                    <Switch
+                        android:id="@+id/page_invisible_analog_stick_press_vibration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
 
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
                     android:id="@+id/page_invisible_analog_stick_special_trigger_radius"
@@ -134,7 +141,7 @@
                     app:text="@string/crown_stick_special_trigger_radius"
                     app:max="300"
                     app:min="100"
-                    app:progress="120"/>
+                    app:progress="100"/>
             </LinearLayout>
 
             <!-- 📐 位置和尺寸 -->

@@ -1230,6 +1230,6 @@
 
     <string name="crown_stick_special_value">特殊按键</string>
     <string name="crown_stick_special_default">无</string>
-    <string name="crown_stick_special_hit_radius">特殊接管半径 %</string>
-    <string name="crown_stick_special_trigger_radius">特殊触发半径 %</string>
+    <string name="crown_stick_press_vibration">按下摇杆时震动</string>
+    <string name="crown_stick_special_trigger_radius">特殊触发半径 %（100 = 关闭）</string>
 </resources>

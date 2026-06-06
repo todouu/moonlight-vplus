@@ -1,8 +1,12 @@
 package com.limelight.binding.input.advance_setting.element;
 
 import android.content.ContentValues;
+import android.graphics.Canvas;
+import android.graphics.DashPathEffect;
+import android.graphics.Paint;
 import android.view.View;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import com.google.gson.Gson;
@@ -15,27 +19,35 @@ import java.util.Map;
 
 final class StickSpecialButton {
     static final String ATTR_VALUE = "stickSpecialValue";
-    static final String ATTR_HIT_RADIUS_PERCENT = "stickSpecialHitRadiusPercent";
     static final String ATTR_TRIGGER_RADIUS_PERCENT = "stickSpecialTriggerRadiusPercent";
+    static final String ATTR_STICK_PRESS_VIBRATION_ENABLED = "stickPressVibrationEnabled";
 
     private static final String DEFAULT_VALUE = "null";
-    private static final int DEFAULT_HIT_RADIUS_PERCENT = 130;
-    private static final int DEFAULT_TRIGGER_RADIUS_PERCENT = 120;
     private static final int MIN_RADIUS_PERCENT = 100;
     private static final int MAX_RADIUS_PERCENT = 300;
+    private static final int DEFAULT_TRIGGER_RADIUS_PERCENT = MIN_RADIUS_PERCENT;
+    private static final boolean DEFAULT_STICK_PRESS_VIBRATION_ENABLED = false;
+    private static final int PREVIEW_COLOR = 0xFFFF9800;
 
     private final ElementController elementController;
     private final JsonObject extraAttributes;
+    private final Paint previewPaint = new Paint();
 
     private String value = DEFAULT_VALUE;
-    private int hitRadiusPercent = DEFAULT_HIT_RADIUS_PERCENT;
     private int triggerRadiusPercent = DEFAULT_TRIGGER_RADIUS_PERCENT;
+    private boolean stickPressVibrationEnabled = DEFAULT_STICK_PRESS_VIBRATION_ENABLED;
     private ElementController.SendEventHandler sendHandler;
     private boolean pressed;
+    private boolean previewing;
+    private int previewRadiusPercent = DEFAULT_TRIGGER_RADIUS_PERCENT;
 
     StickSpecialButton(Map<String, Object> attributesMap, ElementController elementController) {
         this.elementController = elementController;
         this.extraAttributes = parseExtraAttributes(attributesMap.get(Element.COLUMN_STRING_EXTRA_ATTRIBUTES));
+        previewPaint.setStyle(Paint.Style.STROKE);
+        previewPaint.setStrokeWidth(4);
+        previewPaint.setColor(PREVIEW_COLOR);
+        previewPaint.setPathEffect(new DashPathEffect(new float[]{10, 20}, 0));
         load();
         this.sendHandler = elementController.getSendEventHandler(value);
     }
@@ -61,8 +73,11 @@ final class StickSpecialButton {
         if (extraAttributes.has(ATTR_VALUE)) {
             value = extraAttributes.get(ATTR_VALUE).getAsString();
         }
-        hitRadiusPercent = readRadiusPercent(ATTR_HIT_RADIUS_PERCENT, DEFAULT_HIT_RADIUS_PERCENT);
         triggerRadiusPercent = readRadiusPercent(ATTR_TRIGGER_RADIUS_PERCENT, DEFAULT_TRIGGER_RADIUS_PERCENT);
+        stickPressVibrationEnabled = readBoolean(
+                ATTR_STICK_PRESS_VIBRATION_ENABLED,
+                DEFAULT_STICK_PRESS_VIBRATION_ENABLED
+        );
     }
 
     private int readRadiusPercent(String key, int defaultValue) {
@@ -77,10 +92,11 @@ final class StickSpecialButton {
     }
 
     void bind(TextView valueTextView,
-              NumberSeekbar hitRadiusSeekbar,
+              Switch stickPressVibrationSwitch,
               NumberSeekbar triggerRadiusSeekbar,
               PageDeviceController pageDeviceController,
-              Runnable saveCallback) {
+              Runnable saveCallback,
+              Runnable invalidateCallback) {
         valueTextView.setText(pageDeviceController.getKeyNameByValue(value));
         valueTextView.setOnClickListener(v -> {
             PageDeviceController.DeviceCallBack deviceCallBack = key -> {
@@ -91,37 +107,69 @@ final class StickSpecialButton {
             pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
         });
 
-        bindRadiusSeekbar(hitRadiusSeekbar, hitRadiusPercent, progress -> {
-            setHitRadiusPercent(progress);
+        stickPressVibrationSwitch.setChecked(stickPressVibrationEnabled);
+        stickPressVibrationSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            stickPressVibrationEnabled = isChecked;
             saveCallback.run();
         });
-        bindRadiusSeekbar(triggerRadiusSeekbar, triggerRadiusPercent, progress -> {
-            setTriggerRadiusPercent(progress);
-            saveCallback.run();
-        });
+
+        bindTriggerRadiusSeekbar(triggerRadiusSeekbar, saveCallback, invalidateCallback);
     }
 
-    private void bindRadiusSeekbar(NumberSeekbar seekbar, int value, RadiusChangeListener listener) {
+    private boolean readBoolean(String key, boolean defaultValue) {
+        if (!extraAttributes.has(key)) {
+            return defaultValue;
+        }
+        try {
+            return extraAttributes.get(key).getAsBoolean();
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private void bindTriggerRadiusSeekbar(NumberSeekbar seekbar, Runnable saveCallback, Runnable invalidateCallback) {
         seekbar.setProgressMin(MIN_RADIUS_PERCENT);
         seekbar.setProgressMax(MAX_RADIUS_PERCENT);
-        seekbar.setValueWithNoCallBack(value);
+        seekbar.setValueWithNoCallBack(triggerRadiusPercent);
         seekbar.setOnNumberSeekbarChangeListener(new NumberSeekbar.OnNumberSeekbarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                previewRadiusPercent = clampRadiusPercent(progress);
+                previewing = true;
+                invalidateCallback.run();
             }
 
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
+                previewRadiusPercent = clampRadiusPercent(seekBar.getProgress());
+                previewing = true;
+                invalidateCallback.run();
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
-                listener.onChanged(seekBar.getProgress());
+                setTriggerRadiusPercent(seekBar.getProgress());
+                previewing = false;
+                saveCallback.run();
+                invalidateCallback.run();
             }
         });
     }
 
+    void drawTriggerPreview(Canvas canvas, float centerX, float centerY, float radiusComplete) {
+        if (!previewing || previewRadiusPercent <= MIN_RADIUS_PERCENT) {
+            return;
+        }
+        float previewRadius = radiusComplete * previewRadiusPercent / 100.0f;
+        canvas.drawCircle(centerX, centerY, previewRadius, previewPaint);
+    }
+
     void update(double rawMovementRadius, float radiusComplete) {
+        if (triggerRadiusPercent <= MIN_RADIUS_PERCENT) {
+            release();
+            return;
+        }
+
         boolean shouldPress = rawMovementRadius >= getTriggerRadius(radiusComplete);
         if (shouldPress && !pressed) {
             sendHandler.sendEvent(true);
@@ -129,6 +177,12 @@ final class StickSpecialButton {
             elementController.buttonVibrator();
         } else if (!shouldPress && pressed) {
             release();
+        }
+    }
+
+    void onStickPressed() {
+        if (stickPressVibrationEnabled) {
+            elementController.buttonVibrator();
         }
     }
 
@@ -140,14 +194,10 @@ final class StickSpecialButton {
         pressed = false;
     }
 
-    double getHitRadius(float radiusComplete) {
-        return radiusComplete * hitRadiusPercent / 100.0;
-    }
-
     void putExtraAttributes(ContentValues contentValues) {
         extraAttributes.addProperty(ATTR_VALUE, value);
-        extraAttributes.addProperty(ATTR_HIT_RADIUS_PERCENT, hitRadiusPercent);
         extraAttributes.addProperty(ATTR_TRIGGER_RADIUS_PERCENT, triggerRadiusPercent);
+        extraAttributes.addProperty(ATTR_STICK_PRESS_VIBRATION_ENABLED, stickPressVibrationEnabled);
         contentValues.put(Element.COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(extraAttributes));
     }
 
@@ -160,19 +210,11 @@ final class StickSpecialButton {
         this.sendHandler = elementController.getSendEventHandler(value);
     }
 
-    private void setHitRadiusPercent(int hitRadiusPercent) {
-        this.hitRadiusPercent = clampRadiusPercent(hitRadiusPercent);
-    }
-
     private void setTriggerRadiusPercent(int triggerRadiusPercent) {
         this.triggerRadiusPercent = clampRadiusPercent(triggerRadiusPercent);
     }
 
     private int clampRadiusPercent(int value) {
         return Math.max(MIN_RADIUS_PERCENT, Math.min(MAX_RADIUS_PERCENT, value));
-    }
-
-    private interface RadiusChangeListener {
-        void onChanged(int value);
     }
 }

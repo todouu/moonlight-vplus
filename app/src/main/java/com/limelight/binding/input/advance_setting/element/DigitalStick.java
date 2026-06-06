@@ -296,6 +296,7 @@ public class DigitalStick extends Element {
 
             @Override
             public void onClick() {
+                specialButton.onStickPressed();
             }
 
             @Override
@@ -378,6 +379,8 @@ public class DigitalStick extends Element {
             canvas.drawRect(rect, paintEdit);
 
         }
+
+        specialButton.drawTriggerPreview(canvas, radius, radius, radius_complete);
     }
 
     private void updatePosition(long eventTime) {
@@ -421,7 +424,7 @@ public class DigitalStick extends Element {
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
-        if (rawMovementRadius > specialButton.getHitRadius(radius_complete) && !isPressed())
+        if (movement_radius > radius_complete && !isPressed())
             return false;
 
         // chop radius if out of outer circle or near the edge
@@ -492,8 +495,8 @@ public class DigitalStick extends Element {
         TextView leftValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_left_value);
         TextView rightValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_right_value);
         TextView specialValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_special_value);
+        Switch stickPressVibrationSwitch = digitalStickPage.findViewById(R.id.page_digital_stick_press_vibration);
         NumberSeekbar deadZoneRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_sense);
-        NumberSeekbar specialHitRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_hit_radius);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_thick);
         NumberSeekbar layerNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_layer);
@@ -584,7 +587,7 @@ public class DigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, specialHitRadiusNumberSeekbar, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);

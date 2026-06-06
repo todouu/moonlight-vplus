@@ -1284,6 +1284,6 @@
 
     <string name="crown_stick_special_value">Special Button</string>
     <string name="crown_stick_special_default">None</string>
-    <string name="crown_stick_special_hit_radius">Special Hit Radius %</string>
-    <string name="crown_stick_special_trigger_radius">Special Trigger Radius %</string>
+    <string name="crown_stick_press_vibration">Vibrate On Stick Press</string>
+    <string name="crown_stick_special_trigger_radius">Special Trigger Radius % (100 = Off)</string>
 </resources>

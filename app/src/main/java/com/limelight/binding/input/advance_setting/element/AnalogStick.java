@@ -277,6 +277,7 @@ public class AnalogStick extends Element {
 
             @Override
             public void onClick() {
+                specialButton.onStickPressed();
             }
 
             @Override
@@ -359,6 +360,8 @@ public class AnalogStick extends Element {
             canvas.drawRect(rect, paintEdit);
 
         }
+
+        specialButton.drawTriggerPreview(canvas, radius, radius, radius_complete);
     }
 
     private void updatePosition(long eventTime) {
@@ -414,7 +417,7 @@ public class AnalogStick extends Element {
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
-        if (rawMovementRadius > specialButton.getHitRadius(radius_complete) && !isPressed())
+        if (movement_radius > radius_complete && !isPressed())
             return false;
 
         // chop radius if out of outer circle or near the edge
@@ -484,10 +487,10 @@ public class AnalogStick extends Element {
         NumberSeekbar radiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_radius);
         TextView middleValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_middle_value);
         TextView specialValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_special_value);
+        Switch stickPressVibrationSwitch = analogStickPage.findViewById(R.id.page_analog_stick_press_vibration);
         RadioGroup modeRadioGroup = analogStickPage.findViewById(R.id.page_analog_stick_value);
         Switch moveModeSwitch = analogStickPage.findViewById(R.id.page_analog_stick_move_mode);
         NumberSeekbar deadZoneRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_sense);
-        NumberSeekbar specialHitRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_special_hit_radius);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_layer);
@@ -531,7 +534,7 @@ public class AnalogStick extends Element {
                 save();
             }
         });
-        specialButton.bind(specialValueTextView, specialHitRadiusNumberSeekbar, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
