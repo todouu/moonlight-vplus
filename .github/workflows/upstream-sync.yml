@@ -17,13 +17,22 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Get latest upstream release
         id: upstream
         run: |
-          RESPONSE=$(curl -sf "https://api.github.com/repos/qiin2333/moonlight-android/releases/latest")
-          VERSION=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+          RESPONSE=$(curl -sfL "https://api.github.com/repos/qiin2333/moonlight-android/releases/latest")
+          if [ -z "$RESPONSE" ]; then
+            echo "::error::curl failed or returned empty response"
+            exit 1
+          fi
+          VERSION=$(echo "$RESPONSE" | jq -r '.tag_name')
+          if [ "$VERSION" = "null" ] || [ -z "$VERSION" ]; then
+            echo "::error::tag_name not found in API response"
+            echo "$RESPONSE" | jq . >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Upstream latest release: $VERSION"
 
@@ -53,7 +62,7 @@ jobs:
           git config user.name "todou"
           git config user.email "pslzj@outlook.com"
 
-          if git merge "upstream/${VERSION}" --no-edit --allow-unrelated-histories; then
+          if git merge "${VERSION}" --no-edit --allow-unrelated-histories; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "Merge succeeded."
           else
@@ -67,7 +76,7 @@ jobs:
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
           git push origin master
-          git tag "$VERSION"
+          git tag -f "$VERSION"
           git push origin "$VERSION"
           echo "Pushed tag $VERSION — android-ci.yml build triggered."
 
@@ -75,5 +84,5 @@ jobs:
         if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.success == 'false'
         run: |
           echo "::error::Merge conflict detected with upstream ${{ steps.upstream.outputs.version }}."
-          echo "::error::Please resolve manually: git merge upstream/${{ steps.upstream.outputs.version }}"
+          echo "::error::Please resolve manually: git merge ${{ steps.upstream.outputs.version }}"
           exit 1
