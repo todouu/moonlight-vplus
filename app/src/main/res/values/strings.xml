@@ -1042,6 +1042,7 @@
     <string name="layout_page_config_text_9eba2">Current Profile</string>
     <string name="layout_page_config_text_83a23">Touch Input</string>
     <string name="layout_page_config_text_f4b7c">Touchpad</string>
+    <string name="page_digital_movable_button_vibration">Press Vibration</string>
     <string name="layout_page_config_text_8ea81">Multi-Touch</string>
     <string name="layout_page_config_text_cd2c1">Game Rumble</string>
     <string name="layout_page_config_text_f4651">Button Feedback</string>
