@@ -148,7 +148,7 @@ public class InvisibleAnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
-    private StickSwipTrigger specialButton;
+    private StickSwipTrigger swipTriggerButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -251,7 +251,7 @@ public class InvisibleAnalogStick extends Element {
         middleValue = (String) attributesMap.get(COLUMN_STRING_ELEMENT_MIDDLE_VALUE);
         valueSendHandler = controller.getSendEventHandler(value);
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
-        specialButton = new StickSwipTrigger(attributesMap, controller);
+        swipTriggerButton = new StickSwipTrigger(attributesMap, controller);
 
         listener = new InvisibleAnalogStickListener() {
             @Override
@@ -261,7 +261,7 @@ public class InvisibleAnalogStick extends Element {
 
             @Override
             public void onClick() {
-                specialButton.onStickPressed();
+                swipTriggerButton.onStickPressed();
             }
 
             @Override
@@ -314,11 +314,11 @@ public class InvisibleAnalogStick extends Element {
         NumberSeekbar radiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_radius);
         RadioGroup valueRadioGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_value);
         TextView middleValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_middle_value);
-        TextView specialValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
+        TextView swipTriggerValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
         Switch stickPressVibrationSwitch = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_press_vibration);
         RadioGroup triggerModeGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_trigger_mode);
         NumberSeekbar senseNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_sense);
-        NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
+        NumberSeekbar swipTriggerRadiusSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_layer);
         ElementEditText normalColorEditText = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_normal_color);
@@ -354,7 +354,7 @@ public class InvisibleAnalogStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_invisible_analog_stick_trigger_mode_hold, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        swipTriggerButton.bind(swipTriggerValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_invisible_analog_stick_trigger_mode_hold, swipTriggerRadiusSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -533,7 +533,7 @@ public class InvisibleAnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-                specialButton.putExtraAttributes(contentValues);
+                swipTriggerButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -566,7 +566,7 @@ public class InvisibleAnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-        specialButton.putExtraAttributes(contentValues);
+        swipTriggerButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -617,7 +617,7 @@ public class InvisibleAnalogStick extends Element {
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
 
-            specialButton.drawTriggerPreview(canvas, getWidth() / 2f, getHeight() / 2f, radius_complete);
+            swipTriggerButton.drawTriggerPreview(canvas, getWidth() / 2f, getHeight() / 2f, radius_complete);
         }
 
         if (!isPressed()) {
@@ -744,10 +744,10 @@ public class InvisibleAnalogStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
-            specialButton.update(rawMovementRadius, radius_complete);
+            swipTriggerButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = InvisibleAnalogStick.STICK_STATE.NO_MOVEMENT;
-            specialButton.release();
+            swipTriggerButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick
