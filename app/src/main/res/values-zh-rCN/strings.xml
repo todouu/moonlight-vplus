@@ -1021,6 +1021,8 @@
     <string name="hide_keys_child_visible">显示被隐藏的按钮</string>
     <string name="hide_keys_section_touch_mode">激活时触控模式</string>
     <string name="hide_keys_touch_mode_description">选择按键被隐藏时切换到的触控模式</string>
+    <string name="hide_keys_section_default_touch_mode">显示时触控模式</string>
+    <string name="hide_keys_default_touch_mode_description">选择按键显示时使用的触控模式</string>
     <string name="hide_keys_mode_mouse">经典鼠标模式</string>
     <string name="hide_keys_mode_trackpad">触控板模式</string>
     <string name="hide_keys_mode_multi_touch">多点触控模式</string>

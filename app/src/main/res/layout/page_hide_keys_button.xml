@@ -151,6 +151,67 @@
                 </RadioGroup>
             </LinearLayout>
 
+            <!-- 按键显示时触控模式卡片 -->
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/crown_config_section_bg"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_section_default_touch_mode"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#E0E0E0"
+                    android:layout_marginBottom="10dp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_default_touch_mode_description"
+                    android:textSize="12sp"
+                    android:textColor="#99FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <RadioGroup
+                    android:id="@+id/page_hide_keys_default_touch_mode_group"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_mouse"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_mouse"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_trackpad"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_trackpad"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_multi_touch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_multi_touch"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+                </RadioGroup>
+            </LinearLayout>
+
             <!-- 位置和尺寸卡片 -->
             <LinearLayout
                 android:orientation="vertical"

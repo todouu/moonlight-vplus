@@ -78,6 +78,7 @@ public class HideKeysButton extends Element {
     private int pressedTextColor;
     private int textSizePercent;
     private String activeTouchMode; // 隐藏按键激活时的触控模式
+    private String defaultTouchMode; // 按键显示时的默认触控模式
 
     private SuperPageLayout hideKeysPage;
     private NumberSeekbar centralXNumberSeekbar;
@@ -164,8 +165,9 @@ public class HideKeysButton extends Element {
             textSizePercent = 25;
         }
 
-        // 从 extra_attributes 加载 activeTouchMode
-        this.activeTouchMode = TOUCH_MODE_TRACKPAD; // 默认触控板
+        // 从 extra_attributes 加载 activeTouchMode 和 defaultTouchMode
+        this.activeTouchMode = TOUCH_MODE_TRACKPAD;
+        this.defaultTouchMode = TOUCH_MODE_TRACKPAD;
         if (attributesMap.containsKey(COLUMN_STRING_EXTRA_ATTRIBUTES)) {
             String extraAttrsJson = (String) attributesMap.get(COLUMN_STRING_EXTRA_ATTRIBUTES);
             if (extraAttrsJson != null && !extraAttrsJson.isEmpty()) {
@@ -173,6 +175,9 @@ public class HideKeysButton extends Element {
                     JsonObject extraAttrs = JsonParser.parseString(extraAttrsJson).getAsJsonObject();
                     if (extraAttrs.has("activeTouchMode")) {
                         this.activeTouchMode = extraAttrs.get("activeTouchMode").getAsString();
+                    }
+                    if (extraAttrs.has("defaultTouchMode")) {
+                        this.defaultTouchMode = extraAttrs.get("defaultTouchMode").getAsString();
                     }
                 } catch (Exception e) {
                     // ignore
@@ -399,6 +404,7 @@ public class HideKeysButton extends Element {
 
         JsonObject extraAttrs = new JsonObject();
         extraAttrs.addProperty("activeTouchMode", this.activeTouchMode);
+        extraAttrs.addProperty("defaultTouchMode", this.defaultTouchMode);
         contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(extraAttrs));
 
         elementController.updateElement(elementId, contentValues);
@@ -439,6 +445,7 @@ public class HideKeysButton extends Element {
         ElementEditText normalTextColorElementEditText = page.findViewById(R.id.page_hide_keys_normal_text_color);
         ElementEditText pressedTextColorElementEditText = page.findViewById(R.id.page_hide_keys_pressed_text_color);
         RadioGroup touchModeGroup = page.findViewById(R.id.page_hide_keys_touch_mode_group);
+        RadioGroup defaultTouchModeGroup = page.findViewById(R.id.page_hide_keys_default_touch_mode_group);
         Button deleteButton = page.findViewById(R.id.page_hide_keys_delete);
 
         // 按键文本
@@ -479,7 +486,28 @@ public class HideKeysButton extends Element {
             }
             save();
         });
-
+        // 默认触控模式（按键显示时）
+        switch (defaultTouchMode) {
+            case TOUCH_MODE_MOUSE:
+                defaultTouchModeGroup.check(R.id.page_hide_keys_default_mode_mouse);
+                break;
+            case TOUCH_MODE_TRACKPAD:
+                defaultTouchModeGroup.check(R.id.page_hide_keys_default_mode_trackpad);
+                break;
+            case TOUCH_MODE_MULTI_TOUCH:
+                defaultTouchModeGroup.check(R.id.page_hide_keys_default_mode_multi_touch);
+                break;
+        }
+        defaultTouchModeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            if (checkedId == R.id.page_hide_keys_default_mode_mouse) {
+                defaultTouchMode = TOUCH_MODE_MOUSE;
+            } else if (checkedId == R.id.page_hide_keys_default_mode_trackpad) {
+                defaultTouchMode = TOUCH_MODE_TRACKPAD;
+            } else if (checkedId == R.id.page_hide_keys_default_mode_multi_touch) {
+                defaultTouchMode = TOUCH_MODE_MULTI_TOUCH;
+            }
+            save();
+        });
         // 位置
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -687,12 +715,30 @@ public class HideKeysButton extends Element {
                     break;
             }
         } else {
-            // 按键显示时，恢复为触控板模式
-            controllerManager.getTouchController().setTouchMode(true);
-            controllerManager.getTouchController().setEnhancedTouch(false);
-            contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(true));
-            contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false));
-            elementController.showToast("触控板模式");
+            // 按键显示时，切换到用户配置的默认触控模式
+            switch (defaultTouchMode) {
+                case TOUCH_MODE_MOUSE:
+                    controllerManager.getTouchController().setTouchMode(false);
+                    controllerManager.getTouchController().setEnhancedTouch(false);
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false));
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false));
+                    elementController.showToast("经典鼠标模式");
+                    break;
+                case TOUCH_MODE_TRACKPAD:
+                    controllerManager.getTouchController().setTouchMode(true);
+                    controllerManager.getTouchController().setEnhancedTouch(false);
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(true));
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false));
+                    elementController.showToast("触控板模式");
+                    break;
+                case TOUCH_MODE_MULTI_TOUCH:
+                    controllerManager.getTouchController().setTouchMode(false);
+                    controllerManager.getTouchController().setEnhancedTouch(true);
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false));
+                    contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(true));
+                    elementController.showToast("多点触控模式");
+                    break;
+            }
         }
 
         controllerManager.getSuperConfigDatabaseHelper().updateConfig(
@@ -762,6 +808,7 @@ public class HideKeysButton extends Element {
 
         JsonObject extraAttrs = new JsonObject();
         extraAttrs.addProperty("activeTouchMode", TOUCH_MODE_TRACKPAD);
+        extraAttrs.addProperty("defaultTouchMode", TOUCH_MODE_TRACKPAD);
         contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(extraAttrs));
 
         return contentValues;

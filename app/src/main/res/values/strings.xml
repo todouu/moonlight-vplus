@@ -1095,6 +1095,8 @@
     <string name="hide_keys_child_visible">Show Hidden Buttons</string>
     <string name="hide_keys_section_touch_mode">Touch Mode When Activated</string>
     <string name="hide_keys_touch_mode_description">Select the touch mode to switch to when buttons are hidden</string>
+    <string name="hide_keys_section_default_touch_mode">Touch Mode When Visible</string>
+    <string name="hide_keys_default_touch_mode_description">Select the touch mode to use when buttons are shown</string>
     <string name="hide_keys_mode_mouse">Classic Mouse Mode</string>
     <string name="hide_keys_mode_trackpad">Trackpad Mode</string>
     <string name="hide_keys_mode_multi_touch">Multi-Touch Mode</string>
