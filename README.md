@@ -1,7 +1,9 @@
+> 本项目是 [Moonlight V+](https://github.com/qiin2333/moonlight-android) 的个人 fork 版本，主要用于个人使用，添加了摇杆滑动触发和手动隐藏按键功能。
+
 <div align="center">
   <img src="./app/src/main/res/drawable/vplus.webp" width="100" alt="Moonlight V+ Logo">
 
-  # Moonlight V+
+  # Moonlight T+
 
   [![GitHub Release](https://img.shields.io/github/v/release/qiin2333/moonlight-android?label=latest&style=flat-square)](https://github.com/qiin2333/moonlight-android/releases/latest)
   [![Android](https://img.shields.io/badge/Android-5.0+-34A853?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/about/versions)
@@ -29,7 +31,7 @@
 
 ## 与上游 Moonlight 的区别
 
-Moonlight V+ 在 [moonlight-android](https://github.com/moonlight-stream/moonlight-android) 的基础上增加了大量实用功能，同时保持与原版串流协议的完全兼容。
+Moonlight T+ 在 [moonlight-android](https://github.com/moonlight-stream/moonlight-android) 的基础上增加了大量实用功能，同时保持与原版串流协议的完全兼容。
 
 | 类别 | 功能 | 说明 | 起始版本 |
 |------|------|------|:--------:|

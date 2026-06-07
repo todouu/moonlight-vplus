@@ -53,7 +53,7 @@ android {
                 }
             }
 
-            applicationId "com.limelight.root"
+            applicationId "com.limelight.tplus.root"
             dimension "root"
             buildConfigField "boolean", "ROOT_BUILD", "true"
         }
@@ -65,7 +65,7 @@ android {
                 }
             }
 
-            applicationId "com.limelight"
+            applicationId "com.limelight.tplus"
             dimension "root"
             buildConfigField "boolean", "ROOT_BUILD", "false"
         }
@@ -122,9 +122,9 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix ".vplus_debug"
-            resValue "string", "app_label", "Moonlight V+"
-            resValue "string", "app_label_root", "Moonlight V+"
+            applicationIdSuffix ".debug"
+            resValue "string", "app_label", "Moonlight T+"
+            resValue "string", "app_label_root", "Moonlight T+"
 
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -160,9 +160,9 @@ android {
             // is to please change the applicationId before you publish.
             //
             // TL;DR: Leave the following line alone!
-            applicationIdSuffix ".qiin"
-            resValue "string", "app_label", "Moonlight V+"
-            resValue "string", "app_label_root", "Moonlight (Root)"
+            // applicationIdSuffix removed - using base com.limelight.tplus
+            resValue "string", "app_label", "Moonlight T+"
+            resValue "string", "app_label_root", "Moonlight T+ (Root)"
 
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

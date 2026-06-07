@@ -504,9 +504,9 @@
     <string name="summary_about_mode">View app information and project details</string>
     
     <!-- About dialog strings -->
-    <string name="about_dialog_description">Moonlight V+ is an enhanced client built for Foundation Sunshine, delivering the ultimate game streaming experience.</string>
+    <string name="about_dialog_description">Moonlight T+ is a personal fork of Moonlight V+, adding joystick swipe trigger and manual button hide features.</string>
     <string name="about_dialog_project_info">Based on Moonlight-Android open source project, crafted by the Foundation community</string>
-    <string name="about_dialog_thanks">Thank you for choosing Moonlight V+! If you find it useful, please give us a star on GitHub ⭐</string>
+    <string name="about_dialog_thanks">Thank you for choosing Moonlight T+!</string>
     <string name="about_dialog_github">GitHub</string>
     <string name="about_dialog_star">Star Project</string>
     <string name="about_dialog_qq">Join QQ Group</string>
@@ -670,7 +670,7 @@
     <string name="summary_checkbox_rotable_screen">When enabled, display orientation will be adjusted when device rotates</string>
     
     <!-- Moonlight V+ PC download -->
-    <string name="title_moonlight_vplus_pc_download">Moonlight V+ PC Download</string>
+    <string name="title_moonlight_vplus_pc_download">Moonlight T+ PC Download</string>
     
     <!-- Analytics settings -->
     <string name="title_enable_analytics">Enable Analytics</string>
@@ -1259,7 +1259,7 @@
     <string name="update_install_permission_msg">To auto-install updates, please grant install permission.\n\nTap OK to open settings. Download will start automatically after you return.</string>
     <string name="toast_cannot_open_settings">Cannot open settings page</string>
     <string name="toast_download_service_unavailable">System download service unavailable</string>
-    <string name="update_download_notification_title">Moonlight V+ Update</string>
+    <string name="update_download_notification_title">Moonlight T+ Update</string>
     <string name="toast_download_started">Download started, tap notification to install when complete</string>
     <string name="toast_download_failed">Download failed: %s</string>
     <string name="update_downloading_title">Downloading Update</string>

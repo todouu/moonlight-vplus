@@ -417,13 +417,13 @@
     <string name="summary_setup_guide">查看有关如何设置游戏电脑以进行流传输的说明。</string>
     <string name="title_privacy_policy">隐私政策</string>
     <string name="summary_privacy_policy">查看 Moonlight 隐私政策。</string>
-    <string name="title_about_mode">关于 Moonlight V+</string>
+    <string name="title_about_mode">关于 Moonlight T+</string>
     <string name="summary_about_mode">请前往GitHub查看，喜欢的话点个Star支持一下我们吧。</string>
 
     <!-- About dialog strings -->
-    <string name="about_dialog_description">Moonlight V+ 是专为 Foundation Sunshine 打造的增强客户端，为您带来极致的游戏串流体验。</string>
+    <string name="about_dialog_description">Moonlight T+ 是 Moonlight V+ 的个人 fork 版本，添加了摇杆滑动触发和手动隐藏按键功能。</string>
     <string name="about_dialog_project_info">基于 Moonlight-Android 开源项目，由基地社区倾力打造</string>
-    <string name="about_dialog_thanks">感谢您选择 Moonlight V+！如果觉得好用，欢迎在 GitHub 上点个 Star 支持我们 ⭐</string>
+    <string name="about_dialog_thanks">感谢您使用 Moonlight T+！</string>
     <string name="about_dialog_star">Star 项目</string>
     <string name="about_dialog_qq">加入QQ群</string>
     <string name="about_dialog_close">关闭</string>
@@ -607,7 +607,7 @@
     <string name="summary_checkbox_rotable_screen">启用后，设备旋转时会同步调整显示方向。</string>
 
     <!-- Moonlight V+ PC download -->
-    <string name="title_moonlight_vplus_pc_download">Moonlight V+ PC版下载</string>
+    <string name="title_moonlight_vplus_pc_download">Moonlight T+ PC版下载</string>
 
     <!-- Tip strings -->
     <string name="tip_esc_exit">💡 串流小课堂：使用"退出"按钮可以快速完全地退出串流，让屏幕恢复到串流前的状态哦～</string>
@@ -1205,7 +1205,7 @@
     <string name="update_install_permission_msg">为了自动安装更新，需要授予应用安装权限。\n\n点击确定前往设置页面开启权限，返回后将自动开始下载。</string>
     <string name="toast_cannot_open_settings">无法打开设置页面</string>
     <string name="toast_download_service_unavailable">系统下载服务不可用</string>
-    <string name="update_download_notification_title">Moonlight V+ 更新下载</string>
+    <string name="update_download_notification_title">Moonlight T+ 更新下载</string>
     <string name="toast_download_started">已开始下载，下载完成后点击通知栏即可安装</string>
     <string name="toast_download_failed">下载失败: %s</string>
     <string name="update_downloading_title">正在下载更新</string>
