@@ -166,17 +166,19 @@ final class StickSwipTrigger {
 
     void update(double rawMovementRadius, float radiusComplete) {
         if (triggerRadiusPercent <= MIN_RADIUS_PERCENT) {
-            release();
+            return;
+        }
+
+        // Once triggered in this touch session, stay pressed until release
+        if (pressed) {
             return;
         }
 
         boolean shouldPress = rawMovementRadius >= getTriggerRadius(radiusComplete);
-        if (shouldPress && !pressed) {
+        if (shouldPress) {
             sendHandler.sendEvent(true);
             pressed = true;
             elementController.buttonVibrator();
-        } else if (!shouldPress && pressed) {
-            release();
         }
     }
 
