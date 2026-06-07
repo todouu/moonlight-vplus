@@ -686,21 +686,6 @@ class ComputerManagerService : Service() {
                 polled.pairState == PairingManager.PairState.NOT_PAIRED
     }
 
-    private fun stabilizePairState(current: ComputerDetails, polled: ComputerDetails): ComputerDetails {
-        if (!isPairedHostDowngradedToNotPaired(current, polled)) {
-            return polled
-        }
-
-        LimeLog.warning(
-            "Ignoring server-reported NOT_PAIRED state for locally paired host ${current.name}"
-        )
-
-        return ComputerDetails(polled).apply {
-            pairState = PairingManager.PairState.PAIRED
-            serverCert = current.serverCert
-        }
-    }
-
     private fun tryPollIp(details: ComputerDetails, address: ComputerDetails.AddressTuple): ComputerDetails? {
         val startTime = System.currentTimeMillis()
         try {
@@ -889,7 +874,7 @@ class ComputerManagerService : Service() {
         val nowMs = SystemClock.elapsedRealtime()
         val freshResult = getFreshPollResult(details, nowMs)
         if (freshResult != null) {
-            details.update(freshResult)
+            details.update(TrustedPairState.sanitizePollResult(details, freshResult))
             return true
         }
 
@@ -902,9 +887,9 @@ class ComputerManagerService : Service() {
 
             val polledDetails = pollFlight?.result
             if (polledDetails != null) {
-                val stableDetails = stabilizePairState(details, polledDetails)
-                details.update(stableDetails)
-                rememberPollResult(details, stableDetails, pollFlight.completedAtMs)
+                val trustedDetails = TrustedPairState.sanitizePollResult(details, polledDetails)
+                details.update(trustedDetails)
+                rememberPollResult(details, trustedDetails, pollFlight.completedAtMs)
                 LimeLog.info("Fast poll: reused in-flight result for ${details.name ?: getPrimaryPollKey(details)}")
                 return true
             }
@@ -919,10 +904,10 @@ class ComputerManagerService : Service() {
 
             if (polledDetails != null) {
                 val completedAtMs = SystemClock.elapsedRealtime()
-                val stableDetails = stabilizePairState(details, polledDetails)
-                details.update(stableDetails)
-                rememberPollResult(details, stableDetails, completedAtMs)
-                pollFlight?.result = ComputerDetails(stableDetails)
+                val trustedDetails = TrustedPairState.sanitizePollResult(details, polledDetails)
+                details.update(trustedDetails)
+                rememberPollResult(details, trustedDetails, completedAtMs)
+                pollFlight?.result = ComputerDetails(trustedDetails)
                 pollFlight?.completedAtMs = completedAtMs
                 return true
             }
