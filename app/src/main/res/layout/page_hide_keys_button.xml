@@ -88,6 +88,27 @@
                         android:textSize="15sp"
                         android:paddingHorizontal="12dp"/>
                 </LinearLayout>
+
+                <!-- 选择被隐藏按键 -->
+                <LinearLayout
+                    android:id="@+id/page_hide_keys_select_child_button"
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:background="@drawable/crown_config_input_bg"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="12dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/hide_keys_select_buttons"
+                        android:textSize="14sp"/>
+                    <View
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/crown_right_arrow"/>
+                </LinearLayout>
             </LinearLayout>
 
             <!-- 触控模式选择卡片 -->
@@ -317,46 +338,6 @@
                     app:min="40" />
             </LinearLayout>
 
-            <!-- 子元素管理卡片 -->
-            <LinearLayout
-                android:orientation="vertical"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/crown_config_section_bg"
-                android:padding="12dp"
-                android:layout_marginBottom="10dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/hide_keys_section_select_keys"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#E0E0E0"
-                    android:layout_marginBottom="10dp"/>
-
-                <!-- 选择被隐藏按键 -->
-                <LinearLayout
-                    android:id="@+id/page_hide_keys_select_child_button"
-                    android:orientation="horizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:background="@drawable/crown_config_input_bg"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="12dp">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/hide_keys_select_buttons"
-                        android:textSize="14sp"/>
-                    <View
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:background="@drawable/crown_right_arrow"/>
-                </LinearLayout>
-            </LinearLayout>
-
             <!-- 颜色配置卡片 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -535,31 +516,13 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- 删除操作卡片 -->
-            <LinearLayout
-                android:orientation="vertical"
+            <Button
+                android:id="@+id/page_hide_keys_delete"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/crown_config_section_bg"
-                android:padding="12dp"
-                android:layout_marginBottom="10dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/page_section_delete_operation"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#E0E0E0"
-                    android:layout_marginBottom="10dp"/>
-
-                <Button
-                    android:id="@+id/page_hide_keys_delete"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="@string/layout_config_item_text_2f4aa"
-                    android:textSize="13sp"/>
-            </LinearLayout>
+                android:layout_height="44dp"
+                android:layout_marginBottom="10dp"
+                android:text="@string/layout_config_item_text_2f4aa"
+                android:textSize="13sp"/>
         </LinearLayout>
     </ScrollView>
 </com.limelight.binding.input.advance_setting.superpage.SuperPageLayout>
