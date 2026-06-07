@@ -357,6 +357,7 @@ public class InvisibleDigitalStick extends Element {
         TextView rightValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_right_value);
         TextView specialValueTextView = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_special_value);
         Switch stickPressVibrationSwitch = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_press_vibration);
+        Switch holdModeSwitch = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_hold_mode);
         NumberSeekbar senseNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_sense);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleDigitalStickPage.findViewById(R.id.page_invisible_digital_stick_thick);
@@ -448,7 +449,7 @@ public class InvisibleDigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, holdModeSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);

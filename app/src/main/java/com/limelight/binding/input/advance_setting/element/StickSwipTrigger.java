@@ -21,12 +21,14 @@ final class StickSwipTrigger {
     static final String ATTR_VALUE = "stickSpecialValue";
     static final String ATTR_TRIGGER_RADIUS_PERCENT = "stickSpecialTriggerRadiusPercent";
     static final String ATTR_STICK_PRESS_VIBRATION_ENABLED = "stickPressVibrationEnabled";
+    static final String ATTR_HOLD_MODE = "stickSwipTriggerHoldMode";
 
     private static final String DEFAULT_VALUE = "null";
     private static final int MIN_RADIUS_PERCENT = 100;
     private static final int MAX_RADIUS_PERCENT = 300;
     private static final int DEFAULT_TRIGGER_RADIUS_PERCENT = MIN_RADIUS_PERCENT;
     private static final boolean DEFAULT_STICK_PRESS_VIBRATION_ENABLED = false;
+    private static final boolean DEFAULT_HOLD_MODE = false;
     private static final int PREVIEW_COLOR = 0xFFFF9800;
 
     private final ElementController elementController;
@@ -36,6 +38,7 @@ final class StickSwipTrigger {
     private String value = DEFAULT_VALUE;
     private int triggerRadiusPercent = DEFAULT_TRIGGER_RADIUS_PERCENT;
     private boolean stickPressVibrationEnabled = DEFAULT_STICK_PRESS_VIBRATION_ENABLED;
+    private boolean holdMode = DEFAULT_HOLD_MODE;
     private ElementController.SendEventHandler sendHandler;
     private boolean pressed;
     private boolean previewing;
@@ -78,6 +81,7 @@ final class StickSwipTrigger {
                 ATTR_STICK_PRESS_VIBRATION_ENABLED,
                 DEFAULT_STICK_PRESS_VIBRATION_ENABLED
         );
+        holdMode = readBoolean(ATTR_HOLD_MODE, DEFAULT_HOLD_MODE);
     }
 
     private int readRadiusPercent(String key, int defaultValue) {
@@ -93,6 +97,7 @@ final class StickSwipTrigger {
 
     void bind(TextView valueTextView,
               Switch stickPressVibrationSwitch,
+              Switch holdModeSwitch,
               NumberSeekbar triggerRadiusSeekbar,
               PageDeviceController pageDeviceController,
               Runnable saveCallback,
@@ -110,6 +115,12 @@ final class StickSwipTrigger {
         stickPressVibrationSwitch.setChecked(stickPressVibrationEnabled);
         stickPressVibrationSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             stickPressVibrationEnabled = isChecked;
+            saveCallback.run();
+        });
+
+        holdModeSwitch.setChecked(holdMode);
+        holdModeSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            holdMode = isChecked;
             saveCallback.run();
         });
 
@@ -169,16 +180,28 @@ final class StickSwipTrigger {
             return;
         }
 
-        // Once triggered in this touch session, stay pressed until release
-        if (pressed) {
-            return;
-        }
-
         boolean shouldPress = rawMovementRadius >= getTriggerRadius(radiusComplete);
-        if (shouldPress) {
-            sendHandler.sendEvent(true);
-            pressed = true;
-            elementController.buttonVibrator();
+
+        if (holdMode) {
+            // Hold mode: press when in range, release when out of range
+            if (shouldPress && !pressed) {
+                sendHandler.sendEvent(true);
+                pressed = true;
+                elementController.buttonVibrator();
+            } else if (!shouldPress && pressed) {
+                sendHandler.sendEvent(false);
+                pressed = false;
+            }
+        } else {
+            // Toggle mode: once triggered, stay pressed until finger release
+            if (pressed) {
+                return;
+            }
+            if (shouldPress) {
+                sendHandler.sendEvent(true);
+                pressed = true;
+                elementController.buttonVibrator();
+            }
         }
     }
 
@@ -200,6 +223,7 @@ final class StickSwipTrigger {
         extraAttributes.addProperty(ATTR_VALUE, value);
         extraAttributes.addProperty(ATTR_TRIGGER_RADIUS_PERCENT, triggerRadiusPercent);
         extraAttributes.addProperty(ATTR_STICK_PRESS_VIBRATION_ENABLED, stickPressVibrationEnabled);
+        extraAttributes.addProperty(ATTR_HOLD_MODE, holdMode);
         contentValues.put(Element.COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(extraAttributes));
     }
 

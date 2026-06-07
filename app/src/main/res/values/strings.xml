@@ -1286,4 +1286,5 @@
     <string name="crown_stick_special_default">None</string>
     <string name="crown_stick_press_vibration">Vibrate On Stick Press</string>
     <string name="crown_stick_special_trigger_radius">Swip Trigger Radius % (100 = Off)</string>
+    <string name="crown_stick_swip_hold_mode">Hold Mode (release when back to center)</string>
 </resources>

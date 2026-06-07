@@ -497,6 +497,7 @@ public class DigitalStick extends Element {
         TextView rightValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_right_value);
         TextView specialValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_special_value);
         Switch stickPressVibrationSwitch = digitalStickPage.findViewById(R.id.page_digital_stick_press_vibration);
+        Switch holdModeSwitch = digitalStickPage.findViewById(R.id.page_digital_stick_hold_mode);
         NumberSeekbar deadZoneRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_sense);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_thick);
@@ -588,7 +589,7 @@ public class DigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, holdModeSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
