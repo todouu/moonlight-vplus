@@ -316,7 +316,7 @@ public class InvisibleAnalogStick extends Element {
         TextView middleValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_middle_value);
         TextView specialValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
         Switch stickPressVibrationSwitch = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_press_vibration);
-        Switch holdModeSwitch = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_hold_mode);
+        RadioGroup triggerModeGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_trigger_mode);
         NumberSeekbar senseNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_sense);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_thick);
@@ -354,7 +354,7 @@ public class InvisibleAnalogStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, holdModeSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_invisible_analog_stick_trigger_mode_hold, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);

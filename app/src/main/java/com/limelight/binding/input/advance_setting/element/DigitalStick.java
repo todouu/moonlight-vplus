@@ -15,6 +15,7 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
+import android.widget.RadioGroup;
 import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -497,7 +498,7 @@ public class DigitalStick extends Element {
         TextView rightValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_right_value);
         TextView specialValueTextView = digitalStickPage.findViewById(R.id.page_digital_stick_special_value);
         Switch stickPressVibrationSwitch = digitalStickPage.findViewById(R.id.page_digital_stick_press_vibration);
-        Switch holdModeSwitch = digitalStickPage.findViewById(R.id.page_digital_stick_hold_mode);
+        RadioGroup triggerModeGroup = digitalStickPage.findViewById(R.id.page_digital_stick_trigger_mode);
         NumberSeekbar deadZoneRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_sense);
         NumberSeekbar specialTriggerRadiusNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = digitalStickPage.findViewById(R.id.page_digital_stick_thick);
@@ -589,7 +590,7 @@ public class DigitalStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, holdModeSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_digital_stick_trigger_mode_hold, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);

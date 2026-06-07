@@ -1232,5 +1232,6 @@
     <string name="crown_stick_special_default">无</string>
     <string name="crown_stick_press_vibration">按下摇杆时震动</string>
     <string name="crown_stick_special_trigger_radius">滑动触发半径 %（100 = 关闭）</string>
-    <string name="crown_stick_swip_hold_mode">按住模式（默认为切换模式：触发后保持按住，松手释放）</string>
+    <string name="crown_stick_swip_hold_mode">按住</string>
+    <string name="crown_stick_swip_toggle_mode">切换</string>
 </resources>

@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.view.View;
+import android.widget.RadioGroup;
 import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -97,7 +98,8 @@ final class StickSwipTrigger {
 
     void bind(TextView valueTextView,
               Switch stickPressVibrationSwitch,
-              Switch holdModeSwitch,
+              RadioGroup triggerModeGroup,
+              int holdModeRadioButtonId,
               NumberSeekbar triggerRadiusSeekbar,
               PageDeviceController pageDeviceController,
               Runnable saveCallback,
@@ -118,9 +120,11 @@ final class StickSwipTrigger {
             saveCallback.run();
         });
 
-        holdModeSwitch.setChecked(holdMode);
-        holdModeSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            holdMode = isChecked;
+        if (holdMode) {
+            triggerModeGroup.check(holdModeRadioButtonId);
+        }
+        triggerModeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            holdMode = (checkedId == holdModeRadioButtonId);
             saveCallback.run();
         });
 

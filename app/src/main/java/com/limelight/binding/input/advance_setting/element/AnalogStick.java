@@ -488,7 +488,7 @@ public class AnalogStick extends Element {
         TextView middleValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_middle_value);
         TextView specialValueTextView = analogStickPage.findViewById(R.id.page_analog_stick_special_value);
         Switch stickPressVibrationSwitch = analogStickPage.findViewById(R.id.page_analog_stick_press_vibration);
-        Switch holdModeSwitch = analogStickPage.findViewById(R.id.page_analog_stick_hold_mode);
+        RadioGroup triggerModeGroup = analogStickPage.findViewById(R.id.page_analog_stick_trigger_mode);
         RadioGroup modeRadioGroup = analogStickPage.findViewById(R.id.page_analog_stick_value);
         Switch moveModeSwitch = analogStickPage.findViewById(R.id.page_analog_stick_move_mode);
         NumberSeekbar deadZoneRadiusNumberSeekbar = analogStickPage.findViewById(R.id.page_analog_stick_sense);
@@ -535,7 +535,7 @@ public class AnalogStick extends Element {
                 save();
             }
         });
-        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, holdModeSwitch, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
+        specialButton.bind(specialValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_analog_stick_trigger_mode_hold, specialTriggerRadiusNumberSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);

@@ -150,22 +150,27 @@
                         android:layout_height="wrap_content"/>
                 </LinearLayout>
 
-                <LinearLayout
+                <RadioGroup
+                    android:id="@+id/page_invisible_digital_stick_trigger_mode"
                     android:orientation="horizontal"
                     android:layout_width="match_parent"
                     android:layout_height="40dp"
                     android:layout_marginTop="8dp"
                     android:gravity="center_vertical">
-                    <TextView
+                    <RadioButton
+                        android:id="@+id/page_invisible_digital_stick_trigger_mode_toggle"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="@string/crown_stick_swip_toggle_mode"/>
+                    <RadioButton
+                        android:id="@+id/page_invisible_digital_stick_trigger_mode_hold"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
                         android:text="@string/crown_stick_swip_hold_mode"/>
-                    <Switch
-                        android:id="@+id/page_invisible_digital_stick_hold_mode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"/>
-                </LinearLayout>
+                </RadioGroup>
 
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
                     android:id="@+id/page_invisible_digital_stick_special_trigger_radius"
