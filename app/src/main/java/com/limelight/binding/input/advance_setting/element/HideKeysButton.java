@@ -77,7 +77,6 @@ public class HideKeysButton extends Element {
     private int normalTextColor;
     private int pressedTextColor;
     private int textSizePercent;
-    private boolean hidden = false;
     private String activeTouchMode; // 隐藏按键激活时的触控模式
 
     private SuperPageLayout hideKeysPage;
@@ -164,9 +163,6 @@ public class HideKeysButton extends Element {
         } else {
             textSizePercent = 25;
         }
-
-        Object hiddenFlagObj = attributesMap.get(COLUMN_INT_ELEMENT_FLAG1);
-        this.hidden = (hiddenFlagObj != null) && ((Long) hiddenFlagObj).intValue() == 1;
 
         // 从 extra_attributes 加载 activeTouchMode
         this.activeTouchMode = TOUCH_MODE_TRACKPAD; // 默认触控板
@@ -396,7 +392,7 @@ public class HideKeysButton extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
-        contentValues.put(COLUMN_INT_ELEMENT_FLAG1, hidden ? 1 : 0);
+        contentValues.put(COLUMN_INT_ELEMENT_FLAG1, 0);
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_TEXT_COLOR, normalTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_TEXT_COLOR, pressedTextColor);
         contentValues.put(COLUMN_INT_ELEMENT_TEXT_SIZE_PERCENT, textSizePercent);
@@ -443,8 +439,6 @@ public class HideKeysButton extends Element {
         ElementEditText normalTextColorElementEditText = page.findViewById(R.id.page_hide_keys_normal_text_color);
         ElementEditText pressedTextColorElementEditText = page.findViewById(R.id.page_hide_keys_pressed_text_color);
         RadioGroup touchModeGroup = page.findViewById(R.id.page_hide_keys_touch_mode_group);
-        Switch hiddenSwitch = page.findViewById(R.id.page_hide_keys_hidden_switch);
-        EditText deleteEditText = page.findViewById(R.id.page_hide_keys_delete_edittext);
         Button deleteButton = page.findViewById(R.id.page_hide_keys_delete);
 
         // 按键文本
@@ -483,14 +477,6 @@ public class HideKeysButton extends Element {
             } else if (checkedId == R.id.page_hide_keys_mode_multi_touch) {
                 activeTouchMode = TOUCH_MODE_MULTI_TOUCH;
             }
-            save();
-        });
-
-        // 隐藏自身
-        hiddenSwitch.setChecked(hidden);
-        hiddenSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            hidden = isChecked;
-            onModeChanged(elementController.getMode());
             save();
         });
 
@@ -650,11 +636,9 @@ public class HideKeysButton extends Element {
 
         // 删除
         deleteButton.setOnClickListener(v -> {
-            if (deleteEditText.getText().toString().equals("DELETE")) {
-                elementController.toggleInfoPage(hideKeysPage);
-                elementController.deleteElement(hideKeysButton);
-                Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show();
-            }
+            elementController.toggleInfoPage(hideKeysPage);
+            elementController.deleteElement(hideKeysButton);
+            Toast.makeText(context, "删除成功", Toast.LENGTH_SHORT).show();
         });
     }
 
@@ -733,7 +717,6 @@ public class HideKeysButton extends Element {
     @Override
     public void onModeChanged(ElementController.Mode newMode) {
         super.onModeChanged(newMode);
-        setVisibility(newMode == ElementController.Mode.Normal && hidden ? INVISIBLE : VISIBLE);
 
         switch (newMode) {
             case Select:

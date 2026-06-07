@@ -55,26 +55,6 @@
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="10dp"/>
 
-                <!-- 隐藏自身开关 -->
-                <LinearLayout
-                    android:orientation="horizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/layout_page_group_button_text_b19b4"
-                        android:textSize="13sp"
-                        android:textColor="#CCFFFFFF"/>
-                    <Switch
-                        android:id="@+id/page_hide_keys_hidden_switch"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"/>
-                </LinearLayout>
-
                 <!-- 子按键可见性 -->
                 <CheckBox
                     android:id="@+id/page_hide_keys_child_visible"
@@ -512,36 +492,12 @@
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="10dp"/>
 
-                <LinearLayout
-                    android:orientation="horizontal"
+                <Button
+                    android:id="@+id/page_hide_keys_delete"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp">
-                    <EditText
-                        android:id="@+id/page_hide_keys_delete_edittext"
-                        android:layout_width="0dp"
-                        android:layout_height="44dp"
-                        android:layout_weight="1"
-                        android:layout_marginEnd="8dp"
-                        android:background="@drawable/crown_config_input_bg"
-                        android:paddingHorizontal="12dp"
-                        android:textSize="14sp"
-                        android:hint="@string/page_hint_confirm_delete"/>
-                    <Button
-                        android:id="@+id/page_hide_keys_delete"
-                        android:layout_width="90dp"
-                        android:layout_height="44dp"
-                        android:text="@string/layout_config_item_text_2f4aa"
-                        android:textSize="13sp"/>
-                </LinearLayout>
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/hide_keys_delete_hint"
-                    android:textSize="12sp"
-                    android:textColor="#FFB3B3"
-                    android:paddingVertical="8dp"/>
+                    android:layout_height="44dp"
+                    android:text="@string/layout_config_item_text_2f4aa"
+                    android:textSize="13sp"/>
             </LinearLayout>
         </LinearLayout>
     </ScrollView>
