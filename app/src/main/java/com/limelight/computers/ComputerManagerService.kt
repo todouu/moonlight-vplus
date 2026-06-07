@@ -675,32 +675,24 @@ class ComputerManagerService : Service() {
         findPollingTuple(result)?.lastNetworkPollMs = pollTimeMs
     }
 
+    private fun hasLocalPairing(current: ComputerDetails): Boolean {
+        return current.serverCert != null ||
+                current.pairState == PairingManager.PairState.PAIRED
+    }
+
     private fun isPairedHostDowngradedToNotPaired(current: ComputerDetails, polled: ComputerDetails): Boolean {
-        return current.pairState == PairingManager.PairState.PAIRED &&
-                current.serverCert != null &&
+        return hasLocalPairing(current) &&
                 polled.state == ComputerDetails.State.ONLINE &&
                 polled.pairState == PairingManager.PairState.NOT_PAIRED
     }
 
     private fun stabilizePairState(current: ComputerDetails, polled: ComputerDetails): ComputerDetails {
-        val tuple = findPollingTuple(current)
-
         if (!isPairedHostDowngradedToNotPaired(current, polled)) {
-            tuple?.notPairedPollCount = 0
-            return polled
-        }
-
-        val notPairedCount = (tuple?.notPairedPollCount ?: 0) + 1
-        tuple?.notPairedPollCount = notPairedCount
-
-        if (notPairedCount >= NOT_PAIRED_CONFIRMATION_POLLS) {
-            LimeLog.warning("Accepting confirmed NOT_PAIRED state for ${current.name} after $notPairedCount polls")
             return polled
         }
 
         LimeLog.warning(
-            "Suppressing transient NOT_PAIRED state for paired host ${current.name} " +
-                    "($notPairedCount/$NOT_PAIRED_CONFIRMATION_POLLS)"
+            "Ignoring server-reported NOT_PAIRED state for locally paired host ${current.name}"
         )
 
         return ComputerDetails(polled).apply {
@@ -1170,7 +1162,6 @@ class ComputerManagerService : Service() {
         private const val EMPTY_LIST_THRESHOLD = 3
         private const val POLL_DATA_TTL_MS = 30000
         private const val POLL_RESULT_REUSE_MS: Long = 2500
-        private const val NOT_PAIRED_CONFIRMATION_POLLS = 3
         private const val COLLECTION_TIMEOUT_MS: Long = 2000
     }
 }
@@ -1203,7 +1194,6 @@ class PollingTuple(
     val networkLock = Any()
     var lastSuccessfulPollMs: Long = 0
     var lastNetworkPollMs: Long = 0
-    var notPairedPollCount: Int = 0
 }
 
 class ReachabilityTuple(
