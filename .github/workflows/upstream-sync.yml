@@ -71,34 +71,9 @@ jobs:
           git push origin "$VERSION"
           echo "Pushed tag $VERSION — android-ci.yml build triggered."
 
-      - name: Send failure email
+      - name: Fail on merge conflict (GitHub will send email notification)
         if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.success == 'false'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp-mail.outlook.com
-          server_port: 587
-          secure: false
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "[moonlight-vplus] Upstream sync failed — merge conflict (${{ steps.upstream.outputs.version }})"
-          to: pslzj@outlook.com
-          from: ${{ secrets.MAIL_USERNAME }}
-          body: |
-            Upstream sync failed for moonlight-vplus.
-
-            Upstream version : ${{ steps.upstream.outputs.version }}
-            Upstream repo    : https://github.com/qiin2333/moonlight-android
-            Your repo        : https://github.com/${{ github.repository }}
-
-            The automatic merge encountered conflicts and was aborted.
-            Please resolve them manually:
-
-              git remote add upstream https://github.com/qiin2333/moonlight-android.git
-              git fetch upstream --tags
-              git merge upstream/${{ steps.upstream.outputs.version }}
-              # resolve conflicts, then:
-              git push origin master
-              git tag ${{ steps.upstream.outputs.version }}
-              git push origin ${{ steps.upstream.outputs.version }}
-
-            Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error::Merge conflict detected with upstream ${{ steps.upstream.outputs.version }}."
+          echo "::error::Please resolve manually: git merge upstream/${{ steps.upstream.outputs.version }}"
+          exit 1
