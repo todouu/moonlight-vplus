@@ -31,8 +31,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
-    private class ExportFile {
-        private int version;
+    private static class ExportFile {
+        private int version;`
         private String settings;
         private String elements;
         private String md5;
@@ -764,8 +764,22 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
         }
 
         // MD5校验 (原始数据校验)
+        // 兼容旧版本：由于 ExportFile 曾为非静态内部类，Gson 可能未序列化 version 字段，
+        // 导致反序列化后 version=0。此时尝试用所有已知版本号重新计算 MD5 进行匹配。
         if (!exportFile.getMd5().equals(MathUtils.computeMD5(exportFile.getVersion() + exportFile.getSettings() + exportFile.getElements()))) {
-            return -2; // -2: 文件被篡改或损坏
+            boolean recovered = false;
+            if (exportFile.getVersion() == 0) {
+                for (int v = 1; v <= DATABASE_VERSION; v++) {
+                    if (exportFile.getMd5().equals(MathUtils.computeMD5(v + exportFile.getSettings() + exportFile.getElements()))) {
+                        exportFile.setVersion(v);
+                        recovered = true;
+                        break;
+                    }
+                }
+            }
+            if (!recovered) {
+                return -2; // -2: 文件被篡改或损坏
+            }
         }
 
         // 调用升级逻辑以兼容旧版本配置
@@ -879,9 +893,21 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
             return -1; // -1: 文件格式错误
         }
 
-        // MD5校验
+        // MD5校验（兼容旧版本缺失 version 字段的情况）
         if (!exportFile.getMd5().equals(MathUtils.computeMD5(exportFile.getVersion() + exportFile.getSettings() + exportFile.getElements()))) {
-            return -2; // -2: 文件被篡改或损坏
+            boolean recovered = false;
+            if (exportFile.getVersion() == 0) {
+                for (int v = 1; v <= DATABASE_VERSION; v++) {
+                    if (exportFile.getMd5().equals(MathUtils.computeMD5(v + exportFile.getSettings() + exportFile.getElements()))) {
+                        exportFile.setVersion(v);
+                        recovered = true;
+                        break;
+                    }
+                }
+            }
+            if (!recovered) {
+                return -2; // -2: 文件被篡改或损坏
+            }
         }
 
         // 调用升级逻辑

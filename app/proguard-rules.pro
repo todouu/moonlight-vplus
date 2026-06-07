@@ -26,3 +26,7 @@
 # jMDNS
 -dontwarn javax.jmdns.impl.DNSCache
 -dontwarn org.slf4j.**
+
+# Gson serialized classes (prevent R8 from stripping fields accessed via reflection)
+-keep class com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHelper$ExportFile { *; }
+-keep class com.limelight.binding.input.advance_setting.sqlite.SuperConfigDatabaseHelper$ContentValuesSerializer { *; }
