@@ -1019,7 +1019,7 @@
     <string name="hide_keys_button_title">类型 : 隐藏按键</string>
     <string name="hide_keys_section_settings">隐藏按键设置</string>
     <string name="hide_keys_child_visible">显示被隐藏的按钮</string>
-    <string name="hide_keys_section_touch_mode">激活时触控模式</string>
+    <string name="hide_keys_section_touch_mode">隐藏时触控模式</string>
     <string name="hide_keys_touch_mode_description">选择按键被隐藏时切换到的触控模式</string>
     <string name="hide_keys_section_default_touch_mode">显示时触控模式</string>
     <string name="hide_keys_default_touch_mode_description">选择按键显示时使用的触控模式</string>
