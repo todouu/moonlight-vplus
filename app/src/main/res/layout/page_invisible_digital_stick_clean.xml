@@ -112,6 +112,75 @@
                         android:text="LSB"
                         android:background="@drawable/enabled_square" />
                 </LinearLayout>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/crown_stick_special_value" />
+                    <TextView
+                        android:id="@+id/page_invisible_digital_stick_special_value"
+                        android:layout_width="100dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/crown_stick_special_default"
+                        android:background="@drawable/enabled_square" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/crown_stick_press_vibration"/>
+                    <Switch
+                        android:id="@+id/page_invisible_digital_stick_press_vibration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <RadioGroup
+                    android:id="@+id/page_invisible_digital_stick_trigger_mode"
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical">
+                    <RadioButton
+                        android:id="@+id/page_invisible_digital_stick_trigger_mode_toggle"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="@string/crown_stick_swip_toggle_mode"/>
+                    <RadioButton
+                        android:id="@+id/page_invisible_digital_stick_trigger_mode_hold"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="@string/crown_stick_swip_hold_mode"/>
+                </RadioGroup>
+
+                <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
+                    android:id="@+id/page_invisible_digital_stick_special_trigger_radius"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginVertical="4dp"
+                    app:text="@string/crown_stick_special_trigger_radius"
+                    app:max="300"
+                    app:min="100"
+                    app:progress="100"/>
             </LinearLayout>
 
             <!-- 📐 位置和尺寸 -->

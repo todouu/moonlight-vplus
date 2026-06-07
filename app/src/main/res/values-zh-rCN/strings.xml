@@ -1228,4 +1228,10 @@
     <string name="seekbar_decrease">减小</string>
     <string name="seekbar_increase">增大</string>
 
+    <string name="crown_stick_special_value">摇杆滑动触发</string>
+    <string name="crown_stick_special_default">无</string>
+    <string name="crown_stick_press_vibration">按下摇杆时震动</string>
+    <string name="crown_stick_special_trigger_radius">滑动触发半径 %（100 = 关闭）</string>
+    <string name="crown_stick_swip_hold_mode">按住（回到中心时松开）</string>
+    <string name="crown_stick_swip_toggle_mode">切换（触发后保持按住，松手释放）</string>
 </resources>

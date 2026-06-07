@@ -250,6 +250,8 @@ public class ElementController {
 
     public ElementController(ControllerManager controllerManager, FrameLayout layout, final Context context) {
         this.elementsLayout = layout;
+        this.elementsLayout.setClipChildren(false);
+        this.elementsLayout.setClipToPadding(false);
         this.context = context;
         this.game = (Game) context;
         this.controllerManager = controllerManager;
