@@ -396,6 +396,7 @@
                 android:id="@+id/page_edit_add_group_button"
                 android:layout_width="match_parent"
                 android:layout_height="46dp"
+                android:layout_marginBottom="6dp"
                 android:background="@drawable/crown_config_action_button_bg"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
