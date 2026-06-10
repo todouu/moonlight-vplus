@@ -968,6 +968,7 @@
     <string name="layout_page_config_text_9eba2">当前档案</string>
     <string name="layout_page_config_text_83a23">触控输入</string>
     <string name="layout_page_config_text_f4b7c">触控板</string>
+    <string name="page_digital_movable_button_vibration">按下震动</string>
     <string name="layout_page_config_text_8ea81">多点触控</string>
     <string name="layout_page_config_text_cd2c1">游戏反馈</string>
     <string name="layout_page_config_text_f4651">按键反馈</string>
@@ -1015,6 +1016,20 @@
     <string name="layout_page_edit_text_ed364">新增组合键</string>
     <string name="layout_page_edit_text_1483c">新增轮盘按键</string>
     <string name="layout_page_edit_text_bd823">新增组按键</string>
+    <string name="hide_keys_button_add">新增隐藏按键</string>
+    <string name="hide_keys_button_title">类型 : 隐藏按键</string>
+    <string name="hide_keys_section_settings">隐藏按键设置</string>
+    <string name="hide_keys_child_visible">显示被隐藏的按钮</string>
+    <string name="hide_keys_section_touch_mode">隐藏时触控模式</string>
+    <string name="hide_keys_touch_mode_description">选择按键被隐藏时切换到的触控模式</string>
+    <string name="hide_keys_section_default_touch_mode">显示时触控模式</string>
+    <string name="hide_keys_default_touch_mode_description">选择按键显示时使用的触控模式</string>
+    <string name="hide_keys_mode_mouse">经典鼠标模式</string>
+    <string name="hide_keys_mode_trackpad">触控板模式</string>
+    <string name="hide_keys_mode_multi_touch">多点触控模式</string>
+    <string name="hide_keys_section_select_keys">选择被隐藏的按键</string>
+    <string name="hide_keys_select_buttons">选择按键</string>
+    <string name="hide_keys_delete_hint">输入 DELETE 确认删除</string>
     <string name="layout_page_group_button_text_6db87">类型 : 组按键</string>
     <string name="layout_page_group_button_text_b19b4">隐藏按钮 (轮盘使用下)</string>
     <string name="layout_page_group_button_text_f57fc">按住可移动按键</string>
@@ -1228,4 +1243,10 @@
     <string name="seekbar_decrease">减小</string>
     <string name="seekbar_increase">增大</string>
 
+    <string name="crown_stick_special_value">摇杆滑动触发</string>
+    <string name="crown_stick_special_default">无</string>
+    <string name="crown_stick_press_vibration">按下摇杆时震动</string>
+    <string name="crown_stick_special_trigger_radius">滑动触发半径 %（100 = 关闭）</string>
+    <string name="crown_stick_swip_hold_mode">按住（回到中心时松开）</string>
+    <string name="crown_stick_swip_toggle_mode">切换（触发后保持按住，松手释放）</string>
 </resources>

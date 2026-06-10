@@ -1,0 +1,88 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # every day 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          RESPONSE=$(curl -sfL "https://api.github.com/repos/qiin2333/moonlight-android/releases/latest")
+          if [ -z "$RESPONSE" ]; then
+            echo "::error::curl failed or returned empty response"
+            exit 1
+          fi
+          VERSION=$(echo "$RESPONSE" | jq -r '.tag_name')
+          if [ "$VERSION" = "null" ] || [ -z "$VERSION" ]; then
+            echo "::error::tag_name not found in API response"
+            echo "$RESPONSE" | jq . >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Upstream latest release: $VERSION"
+
+      - name: Check if already synced
+        id: check
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          if git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q "${VERSION}"; then
+            echo "already_synced=true" >> $GITHUB_OUTPUT
+            echo "Tag ${VERSION} already exists in this repo, skipping."
+          else
+            echo "already_synced=false" >> $GITHUB_OUTPUT
+            echo "New upstream version ${VERSION} detected."
+          fi
+
+      - name: Add upstream remote and fetch
+        if: steps.check.outputs.already_synced == 'false'
+        run: |
+          git remote add upstream https://github.com/qiin2333/moonlight-android.git
+          git fetch upstream --tags
+
+      - name: Attempt merge
+        if: steps.check.outputs.already_synced == 'false'
+        id: merge
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          git config user.name "todou"
+          git config user.email "pslzj@outlook.com"
+
+          if git merge "${VERSION}" --no-edit --allow-unrelated-histories; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "Merge succeeded."
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            git merge --abort || true
+            echo "Merge failed due to conflicts."
+          fi
+
+      - name: Push merged master and create release tag
+        if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.success == 'true'
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          git push origin master
+          git tag -f "$VERSION"
+          git push origin "$VERSION"
+          echo "Pushed tag $VERSION — android-ci.yml build triggered."
+
+      - name: Fail on merge conflict (GitHub will send email notification)
+        if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.success == 'false'
+        run: |
+          echo "::error::Merge conflict detected with upstream ${{ steps.upstream.outputs.version }}."
+          echo "::error::Please resolve manually: git merge ${{ steps.upstream.outputs.version }}"
+          exit 1

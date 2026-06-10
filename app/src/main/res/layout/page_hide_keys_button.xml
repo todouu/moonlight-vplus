@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.limelight.binding.input.advance_setting.superpage.SuperPageLayout 
+<com.limelight.binding.input.advance_setting.superpage.SuperPageLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="280dp"
     android:layout_height="match_parent"
     android:tag="280">
-    
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -15,13 +15,13 @@
         android:background="@drawable/crown_config_panel_bg"
         android:scrollbars="none"
         android:fillViewport="true">
-        
+
         <LinearLayout
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="12dp">
-            
+
             <!-- 页面标题 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -31,13 +31,13 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/layout_page_digital_movable_button_text_e279e"
+                    android:text="@string/hide_keys_button_title"
                     android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"/>
             </LinearLayout>
-            
-            <!-- 基础信息卡片 -->
+
+            <!-- 隐藏按键设置卡片 -->
             <LinearLayout
                 android:orientation="vertical"
                 android:layout_width="match_parent"
@@ -45,16 +45,27 @@
                 android:background="@drawable/crown_config_section_bg"
                 android:padding="12dp"
                 android:layout_marginBottom="10dp">
-                
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/page_section_basic_settings"
+                    android:text="@string/hide_keys_section_settings"
                     android:textSize="14sp"
                     android:textStyle="bold"
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="10dp"/>
-                
+
+                <!-- 子按键可见性 -->
+                <CheckBox
+                    android:id="@+id/page_hide_keys_child_visible"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_child_visible"
+                    android:textSize="13sp"
+                    android:textColor="#CCFFFFFF"
+                    android:layout_marginBottom="8dp"
+                    android:paddingVertical="4dp"/>
+
                 <!-- 按键文本 -->
                 <LinearLayout
                     android:orientation="vertical"
@@ -69,104 +80,159 @@
                         android:textColor="#B3FFFFFF"
                         android:layout_marginBottom="6dp"/>
                     <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                        android:id="@+id/page_digital_movable_button_text"
+                        android:id="@+id/page_hide_keys_text"
                         android:layout_width="match_parent"
                         android:layout_height="42dp"
                         android:gravity="center"
-                        android:text="@string/layout_page_digital_combine_button_text_499ef"
                         android:background="@drawable/crown_config_input_bg"
                         android:textSize="15sp"
                         android:paddingHorizontal="12dp"/>
                 </LinearLayout>
-                
-                <!-- 按键值 -->
-                <LinearLayout
-                    android:orientation="vertical"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="10dp">
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/layout_page_digital_common_button_text_577e6"
-                        android:textSize="12sp"
-                        android:textColor="#B3FFFFFF"
-                        android:layout_marginBottom="6dp"/>
-                    <TextView
-                        android:id="@+id/page_digital_movable_button_value"
-                        android:layout_width="match_parent"
-                        android:layout_height="42dp"
-                        android:gravity="center"
-                        android:text="A"
-                        android:background="@drawable/crown_config_input_bg"
-                        android:textSize="15sp"
-                        android:textStyle="bold"/>
-                </LinearLayout>
-                
-                <!-- 启用触摸 -->
-                <LinearLayout
-                    android:id="@+id/page_digital_movable_button_joystick_mode_container"
-                    android:orientation="horizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/layout_page_digital_movable_button_text_3d9c9"
-                        android:textSize="13sp"
-                        android:textColor="#CCFFFFFF"/>
-                    <Switch
-                        android:id="@+id/page_digital_movable_button_enable_touch"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:checked="true"/>
-                </LinearLayout>
-                
-                <!-- 触控板模式 -->
-                <LinearLayout
-                    android:id="@+id/page_digital_movable_button_trackpad_mode_container"
-                    android:orientation="horizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/layout_page_config_text_f4b7c"
-                        android:textSize="13sp"
-                        android:textColor="#CCFFFFFF"/>
-                    <Switch
-                        android:id="@+id/page_digital_movable_button_trackpad_mode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"/>
-                </LinearLayout>
 
-                <!-- 按下震动 -->
+                <!-- 选择被隐藏按键 -->
                 <LinearLayout
+                    android:id="@+id/page_hide_keys_select_child_button"
                     android:orientation="horizontal"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical">
+                    android:layout_height="44dp"
+                    android:background="@drawable/crown_config_input_bg"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="12dp">
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="@string/page_digital_movable_button_vibration"
-                        android:textSize="13sp"
-                        android:textColor="#CCFFFFFF"/>
-                    <Switch
-                        android:id="@+id/page_digital_movable_button_vibration"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:checked="true"/>
+                        android:text="@string/hide_keys_select_buttons"
+                        android:textSize="14sp"/>
+                    <View
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/crown_right_arrow"/>
                 </LinearLayout>
             </LinearLayout>
-            
+
+            <!-- 触控模式选择卡片 -->
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/crown_config_section_bg"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_section_touch_mode"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#E0E0E0"
+                    android:layout_marginBottom="10dp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_touch_mode_description"
+                    android:textSize="12sp"
+                    android:textColor="#99FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <RadioGroup
+                    android:id="@+id/page_hide_keys_touch_mode_group"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_mode_mouse"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_mouse"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_mode_trackpad"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_trackpad"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_mode_multi_touch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_multi_touch"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+                </RadioGroup>
+            </LinearLayout>
+
+            <!-- 按键显示时触控模式卡片 -->
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/crown_config_section_bg"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_section_default_touch_mode"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#E0E0E0"
+                    android:layout_marginBottom="10dp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/hide_keys_default_touch_mode_description"
+                    android:textSize="12sp"
+                    android:textColor="#99FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <RadioGroup
+                    android:id="@+id/page_hide_keys_default_touch_mode_group"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_mouse"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_mouse"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_trackpad"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_trackpad"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+
+                    <RadioButton
+                        android:id="@+id/page_hide_keys_default_mode_multi_touch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/hide_keys_mode_multi_touch"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"
+                        android:paddingVertical="4dp"/>
+                </RadioGroup>
+            </LinearLayout>
+
             <!-- 位置和尺寸卡片 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -175,7 +241,7 @@
                 android:background="@drawable/crown_config_section_bg"
                 android:padding="12dp"
                 android:layout_marginBottom="10dp">
-                
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -184,9 +250,9 @@
                     android:textStyle="bold"
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="8dp"/>
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_central_x"
+                    android:id="@+id/page_hide_keys_central_x"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="6dp"
@@ -194,9 +260,9 @@
                     app:max="100"
                     app:min="0"
                     app:progress="100" />
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_central_y"
+                    android:id="@+id/page_hide_keys_central_y"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="6dp"
@@ -204,9 +270,9 @@
                     app:max="100"
                     app:min="0"
                     app:progress="100" />
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_width"
+                    android:id="@+id/page_hide_keys_width"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="6dp"
@@ -214,9 +280,9 @@
                     app:max="100"
                     app:min="0"
                     app:progress="100" />
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_height"
+                    android:id="@+id/page_hide_keys_height"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     app:text="@string/apptext_pg_digital_combine_button_4296d"
@@ -224,7 +290,7 @@
                     app:min="0"
                     app:progress="100" />
             </LinearLayout>
-            
+
             <!-- 外观样式卡片 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -233,7 +299,7 @@
                 android:background="@drawable/crown_config_section_bg"
                 android:padding="12dp"
                 android:layout_marginBottom="10dp">
-                
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -242,19 +308,9 @@
                     android:textStyle="bold"
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="8dp"/>
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_sense"
-                    android:layout_width="match_parent"
-                    android:layout_height="58dp"
-                    android:layout_marginBottom="6dp"
-                    app:text="@string/apptext_pg_digital_movable_button_e12e7"
-                    app:max="500"
-                    app:min="0"
-                    app:progress="100" />
-                
-                <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_radius"
+                    android:id="@+id/page_hide_keys_radius"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="6dp"
@@ -262,9 +318,9 @@
                     app:max="100"
                     app:min="0"
                     app:progress="0"/>
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_thick"
+                    android:id="@+id/page_hide_keys_thick"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="6dp"
@@ -272,16 +328,16 @@
                     app:max="10"
                     app:min="0"
                     app:progress="3"/>
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_layer"
+                    android:id="@+id/page_hide_keys_layer"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     app:text="@string/apptext_pg_analog_stick_6896d"
                     app:max="140"
                     app:min="40" />
             </LinearLayout>
-            
+
             <!-- 颜色配置卡片 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -290,7 +346,7 @@
                 android:background="@drawable/crown_config_section_bg"
                 android:padding="12dp"
                 android:layout_marginBottom="10dp">
-                
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -299,7 +355,7 @@
                     android:textStyle="bold"
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="10dp"/>
-                
+
                 <!-- 边框颜色行 -->
                 <LinearLayout
                     android:orientation="horizontal"
@@ -320,7 +376,7 @@
                             android:textColor="#B3FFFFFF"
                             android:layout_marginBottom="4dp"/>
                         <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                            android:id="@+id/page_digital_movable_button_normal_color"
+                            android:id="@+id/page_hide_keys_normal_color"
                             android:layout_width="match_parent"
                             android:layout_height="38dp"
                             android:gravity="center"
@@ -329,7 +385,7 @@
                             android:background="@drawable/crown_color_input_bg"
                             android:paddingHorizontal="6dp"/>
                     </LinearLayout>
-                    
+
                     <LinearLayout
                         android:orientation="vertical"
                         android:layout_width="0dp"
@@ -343,7 +399,7 @@
                             android:textColor="#B3FFFFFF"
                             android:layout_marginBottom="4dp"/>
                         <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                            android:id="@+id/page_digital_movable_button_pressed_color"
+                            android:id="@+id/page_hide_keys_pressed_color"
                             android:layout_width="match_parent"
                             android:layout_height="38dp"
                             android:gravity="center"
@@ -353,7 +409,7 @@
                             android:paddingHorizontal="6dp"/>
                     </LinearLayout>
                 </LinearLayout>
-                
+
                 <!-- 背景颜色 -->
                 <LinearLayout
                     android:orientation="vertical"
@@ -367,7 +423,7 @@
                         android:textColor="#B3FFFFFF"
                         android:layout_marginBottom="4dp"/>
                     <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                        android:id="@+id/page_digital_movable_button_background_color"
+                        android:id="@+id/page_hide_keys_background_color"
                         android:layout_width="match_parent"
                         android:layout_height="38dp"
                         android:gravity="center"
@@ -377,7 +433,7 @@
                         android:paddingHorizontal="6dp"/>
                 </LinearLayout>
             </LinearLayout>
-            
+
             <!-- 文字设置卡片 -->
             <LinearLayout
                 android:orientation="vertical"
@@ -386,7 +442,7 @@
                 android:background="@drawable/crown_config_section_bg"
                 android:padding="12dp"
                 android:layout_marginBottom="10dp">
-                
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -395,9 +451,9 @@
                     android:textStyle="bold"
                     android:textColor="#E0E0E0"
                     android:layout_marginBottom="8dp"/>
-                
+
                 <com.limelight.binding.input.advance_setting.superpage.NumberSeekbar
-                    android:id="@+id/page_digital_movable_button_text_size"
+                    android:id="@+id/page_hide_keys_text_size"
                     android:layout_width="match_parent"
                     android:layout_height="58dp"
                     android:layout_marginBottom="8dp"
@@ -405,7 +461,7 @@
                     app:max="150"
                     app:min="10"
                     app:progress="63"/>
-                
+
                 <!-- 文字颜色行 -->
                 <LinearLayout
                     android:orientation="horizontal"
@@ -425,7 +481,7 @@
                             android:textColor="#B3FFFFFF"
                             android:layout_marginBottom="4dp"/>
                         <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                            android:id="@+id/page_digital_movable_button_normal_text_color"
+                            android:id="@+id/page_hide_keys_normal_text_color"
                             android:layout_width="match_parent"
                             android:layout_height="38dp"
                             android:gravity="center"
@@ -434,7 +490,7 @@
                             android:background="@drawable/crown_color_input_bg"
                             android:paddingHorizontal="6dp"/>
                     </LinearLayout>
-                    
+
                     <LinearLayout
                         android:orientation="vertical"
                         android:layout_width="0dp"
@@ -448,7 +504,7 @@
                             android:textColor="#B3FFFFFF"
                             android:layout_marginBottom="4dp"/>
                         <com.limelight.binding.input.advance_setting.superpage.ElementEditText
-                            android:id="@+id/page_digital_movable_button_pressed_text_color"
+                            android:id="@+id/page_hide_keys_pressed_text_color"
                             android:layout_width="match_parent"
                             android:layout_height="38dp"
                             android:gravity="center"
@@ -459,30 +515,14 @@
                     </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
-            
-            <!-- 操作按钮 -->
-            <LinearLayout
-                android:orientation="horizontal"
+
+            <Button
+                android:id="@+id/page_hide_keys_delete"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="8dp">
-                <Button
-                    android:id="@+id/page_digital_movable_button_copy"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
-                    android:text="@string/layout_capability_diagnostic_text_79d3a"
-                    android:textSize="13sp"/>
-                <Button
-                    android:id="@+id/page_digital_movable_button_delete"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:text="@string/layout_config_item_text_2f4aa"
-                    android:textSize="13sp"/>
-            </LinearLayout>
+                android:layout_height="44dp"
+                android:layout_marginBottom="10dp"
+                android:text="@string/layout_config_item_text_2f4aa"
+                android:textSize="13sp"/>
         </LinearLayout>
     </ScrollView>
 </com.limelight.binding.input.advance_setting.superpage.SuperPageLayout>
