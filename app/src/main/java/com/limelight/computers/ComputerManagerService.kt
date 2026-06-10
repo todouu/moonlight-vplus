@@ -21,6 +21,7 @@ import com.limelight.nvstream.http.ComputerDetails
 import com.limelight.nvstream.http.NvApp
 import com.limelight.nvstream.http.NvHTTP
 import com.limelight.nvstream.http.PairingManager
+import com.limelight.nvstream.http.PairStateTrust
 import com.limelight.nvstream.mdns.MdnsComputer
 import com.limelight.nvstream.mdns.MdnsDiscoveryListener
 import com.limelight.preferences.PreferenceConfiguration
@@ -165,7 +166,7 @@ class ComputerManagerService : Service() {
         }
 
         if (!newPc || details.state == ComputerDetails.State.ONLINE) {
-            _computerUpdates.tryEmit(details)
+            emitComputerUpdate(details)
         }
 
         releaseLocalDatabaseReference()
@@ -182,7 +183,7 @@ class ComputerManagerService : Service() {
                     LimeLog.info("Timing out polled state for ${tuple.computer.name}")
                     tuple.computer.state = ComputerDetails.State.UNKNOWN
                 }
-                _computerUpdates.tryEmit(tuple.computer)
+                emitComputerUpdate(tuple.computer)
                 if (tuple.job == null) {
                     tuple.job = createPollingJob(tuple)
                 }
@@ -566,6 +567,14 @@ class ComputerManagerService : Service() {
         }
     }
 
+    private fun emitComputerUpdate(details: ComputerDetails) {
+        val trustedDetails = PairStateTrust.sanitizePollResult(details, details, "update")
+        if (trustedDetails !== details) {
+            details.update(trustedDetails)
+        }
+        _computerUpdates.tryEmit(details)
+    }
+
     private fun toNvHttpTimeoutConfig(timeoutConfig: DynamicTimeoutManager.TimeoutConfig?): NvHTTP.TimeoutConfig {
         if (timeoutConfig == null) {
             return NvHTTP.TimeoutConfig.DEFAULT
@@ -857,7 +866,7 @@ class ComputerManagerService : Service() {
         val nowMs = SystemClock.elapsedRealtime()
         val freshResult = getFreshPollResult(details, nowMs)
         if (freshResult != null) {
-            details.update(freshResult)
+            details.update(PairStateTrust.sanitizePollResult(details, freshResult))
             return true
         }
 
@@ -870,8 +879,9 @@ class ComputerManagerService : Service() {
 
             val polledDetails = pollFlight?.result
             if (polledDetails != null) {
-                details.update(polledDetails)
-                rememberPollResult(details, polledDetails, pollFlight.completedAtMs)
+                val trustedDetails = PairStateTrust.sanitizePollResult(details, polledDetails)
+                details.update(trustedDetails)
+                rememberPollResult(details, trustedDetails, pollFlight.completedAtMs)
                 LimeLog.info("Fast poll: reused in-flight result for ${details.name ?: getPrimaryPollKey(details)}")
                 return true
             }
@@ -886,9 +896,10 @@ class ComputerManagerService : Service() {
 
             if (polledDetails != null) {
                 val completedAtMs = SystemClock.elapsedRealtime()
-                details.update(polledDetails)
-                rememberPollResult(details, polledDetails, completedAtMs)
-                pollFlight?.result = ComputerDetails(polledDetails)
+                val trustedDetails = PairStateTrust.sanitizePollResult(details, polledDetails)
+                details.update(trustedDetails)
+                rememberPollResult(details, trustedDetails, completedAtMs)
+                pollFlight?.result = ComputerDetails(trustedDetails)
                 pollFlight?.completedAtMs = completedAtMs
                 return true
             }
@@ -937,7 +948,7 @@ class ComputerManagerService : Service() {
                     synchronized(pollingTuples) {
                         for (tuple in pollingTuples) {
                             tuple.computer.state = ComputerDetails.State.UNKNOWN
-                            _computerUpdates.tryEmit(tuple.computer)
+                            emitComputerUpdate(tuple.computer)
                         }
                     }
                 }
@@ -949,7 +960,7 @@ class ComputerManagerService : Service() {
                     synchronized(pollingTuples) {
                         for (tuple in pollingTuples) {
                             tuple.computer.state = ComputerDetails.State.OFFLINE
-                            _computerUpdates.tryEmit(tuple.computer)
+                            emitComputerUpdate(tuple.computer)
                         }
                     }
                 }
@@ -1038,7 +1049,7 @@ class ComputerManagerService : Service() {
                     if (computer.state != ComputerDetails.State.ONLINE ||
                         computer.pairState != PairingManager.PairState.PAIRED
                     ) {
-                        _computerUpdates.tryEmit(computer)
+                        emitComputerUpdate(computer)
                         continue
                     }
 
@@ -1089,7 +1100,7 @@ class ComputerManagerService : Service() {
                                 computer.rawAppList = appList
                                 receivedAppList = true
 
-                                _computerUpdates.tryEmit(computer)
+                                emitComputerUpdate(computer)
                             } else if (appList.isEmpty()) {
                                 LimeLog.warning("Null app list received from ${computer.uuid}")
                             }
