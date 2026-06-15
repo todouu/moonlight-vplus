@@ -18,6 +18,7 @@ import android.widget.Button;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import com.limelight.Game;
@@ -147,6 +148,7 @@ public class InvisibleAnalogStick extends Element {
 
     private ElementController.SendEventHandler middleValueSendHandler;
     private ElementController.SendEventHandler valueSendHandler;
+    private StickSwipTrigger swipTriggerButton;
     private String middleValue;
     private String value;
     private int radius;
@@ -249,6 +251,7 @@ public class InvisibleAnalogStick extends Element {
         middleValue = (String) attributesMap.get(COLUMN_STRING_ELEMENT_MIDDLE_VALUE);
         valueSendHandler = controller.getSendEventHandler(value);
         middleValueSendHandler = controller.getSendEventHandler(middleValue);
+        swipTriggerButton = new StickSwipTrigger(attributesMap, controller);
 
         listener = new InvisibleAnalogStickListener() {
             @Override
@@ -258,7 +261,7 @@ public class InvisibleAnalogStick extends Element {
 
             @Override
             public void onClick() {
-                elementController.buttonVibrator();
+                swipTriggerButton.onStickPressed();
             }
 
             @Override
@@ -311,7 +314,11 @@ public class InvisibleAnalogStick extends Element {
         NumberSeekbar radiusNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_radius);
         RadioGroup valueRadioGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_value);
         TextView middleValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_middle_value);
+        TextView swipTriggerValueTextView = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_value);
+        Switch stickPressVibrationSwitch = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_press_vibration);
+        RadioGroup triggerModeGroup = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_trigger_mode);
         NumberSeekbar senseNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_sense);
+        NumberSeekbar swipTriggerRadiusSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_special_trigger_radius);
         NumberSeekbar thickNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_thick);
         NumberSeekbar layerNumberSeekbar = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_layer);
         ElementEditText normalColorEditText = invisibleAnalogStickPage.findViewById(R.id.page_invisible_analog_stick_normal_color);
@@ -347,6 +354,7 @@ public class InvisibleAnalogStick extends Element {
                 pageDeviceController.open(deviceCallBack, View.VISIBLE, View.VISIBLE, View.VISIBLE);
             }
         });
+        swipTriggerButton.bind(swipTriggerValueTextView, stickPressVibrationSwitch, triggerModeGroup, R.id.page_invisible_analog_stick_trigger_mode_hold, swipTriggerRadiusSeekbar, pageDeviceController, this::save, this::invalidate);
 
         centralXNumberSeekbar.setProgressMin(centralXMin);
         centralXNumberSeekbar.setProgressMax(centralXMax);
@@ -525,6 +533,7 @@ public class InvisibleAnalogStick extends Element {
                 contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
                 contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
                 contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+                swipTriggerButton.putExtraAttributes(contentValues);
                 elementController.addElement(contentValues);
             }
         });
@@ -557,6 +566,7 @@ public class InvisibleAnalogStick extends Element {
         contentValues.put(COLUMN_INT_ELEMENT_NORMAL_COLOR, normalColor);
         contentValues.put(COLUMN_INT_ELEMENT_PRESSED_COLOR, pressedColor);
         contentValues.put(COLUMN_INT_ELEMENT_BACKGROUND_COLOR, backgroundColor);
+        swipTriggerButton.putExtraAttributes(contentValues);
         elementController.updateElement(elementId, contentValues);
 
     }
@@ -606,6 +616,8 @@ public class InvisibleAnalogStick extends Element {
 
             paintStick.setColor(normalColor);
             canvas.drawCircle(getWidth() / 2, getHeight() / 2, radius_analog_stick, paintStick);
+
+            swipTriggerButton.drawTriggerPreview(canvas, getWidth() / 2f, getHeight() / 2f, radius_complete);
         }
 
         if (!isPressed()) {
@@ -687,6 +699,7 @@ public class InvisibleAnalogStick extends Element {
 
         // get radius and angel of movement from center
         movement_radius = getMovementRadius(relative_x, relative_y);
+        double rawMovementRadius = movement_radius;
         movement_angle = getAngle(relative_x, relative_y);
 
         // pass touch event to parent if out of outer circle
@@ -731,8 +744,10 @@ public class InvisibleAnalogStick extends Element {
         if (isPressed()) {
             // when is pressed calculate new positions (will trigger movement if necessary)
             updatePosition(event.getEventTime());
+            swipTriggerButton.update(rawMovementRadius, radius_complete);
         } else {
             stick_state = InvisibleAnalogStick.STICK_STATE.NO_MOVEMENT;
+            swipTriggerButton.release();
             notifyOnRevoke();
 
             // not longer pressed reset analog stick

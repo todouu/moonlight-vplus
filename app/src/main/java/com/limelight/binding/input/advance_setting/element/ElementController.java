@@ -250,6 +250,8 @@ public class ElementController {
 
     public ElementController(ControllerManager controllerManager, FrameLayout layout, final Context context) {
         this.elementsLayout = layout;
+        this.elementsLayout.setClipChildren(false);
+        this.elementsLayout.setClipToPadding(false);
         this.context = context;
         this.game = (Game) context;
         this.controllerManager = controllerManager;
@@ -379,6 +381,13 @@ public class ElementController {
                 addElement(contentValues);
             }
         });
+        pageEdit.findViewById(R.id.page_edit_add_hide_keys_button).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ContentValues contentValues = HideKeysButton.getInitialInfo();
+                addElement(contentValues);
+            }
+        });
         pageEdit.findViewById(R.id.page_edit_add_wheel_pad).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -430,6 +439,7 @@ public class ElementController {
 
         // 用于在第二阶段链接关系的 GroupButton 列表
         List<GroupButton> groupButtonsToLink = new ArrayList<>();
+        List<HideKeysButton> hideKeysButtonsToLink = new ArrayList<>();
 
         // --- 阶段一：创建所有 Element 对象 ---
         // 遍历所有 elementId，不区分类型，统一调用 loadElement 创建对象
@@ -440,6 +450,9 @@ public class ElementController {
             if (newElement instanceof GroupButton) {
                 groupButtonsToLink.add((GroupButton) newElement);
             }
+            if (newElement instanceof HideKeysButton) {
+                hideKeysButtonsToLink.add((HideKeysButton) newElement);
+            }
         }
 
         // --- 阶段二：链接 GroupButton 的子元素 ---
@@ -447,6 +460,9 @@ public class ElementController {
         for (GroupButton gb : groupButtonsToLink) {
             // 调用我们将在 GroupButton 类中添加的新方法
             gb.linkChildElements(elements);
+        }
+        for (HideKeysButton hkb : hideKeysButtonsToLink) {
+            hkb.linkChildElements(elements);
         }
     }
 
@@ -555,6 +571,13 @@ public class ElementController {
                 element = new WheelPad(attributesMap,
                         this,
                         pageDeviceController,
+                        context);
+                break;
+            case Element.ELEMENT_TYPE_HIDE_KEYS_BUTTON:
+                element = new HideKeysButton(attributesMap,
+                        this,
+                        pageDeviceController,
+                        controllerManager.getSuperPagesController(),
                         context);
                 break;
             default:
@@ -1132,6 +1155,10 @@ public class ElementController {
     //其他辅助方法----------------------------------
     public List<Element> getElements() {
         return elements;
+    }
+
+    public ControllerManager getControllerManager() {
+        return controllerManager;
     }
 
     /**

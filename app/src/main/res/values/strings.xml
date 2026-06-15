@@ -1042,6 +1042,7 @@
     <string name="layout_page_config_text_9eba2">Current Profile</string>
     <string name="layout_page_config_text_83a23">Touch Input</string>
     <string name="layout_page_config_text_f4b7c">Touchpad</string>
+    <string name="page_digital_movable_button_vibration">Press Vibration</string>
     <string name="layout_page_config_text_8ea81">Multi-Touch</string>
     <string name="layout_page_config_text_cd2c1">Game Rumble</string>
     <string name="layout_page_config_text_f4651">Button Feedback</string>
@@ -1089,6 +1090,20 @@
     <string name="layout_page_edit_text_ed364">Add Combo Key</string>
     <string name="layout_page_edit_text_1483c">Add Wheel Button</string>
     <string name="layout_page_edit_text_bd823">Add Group Button</string>
+    <string name="hide_keys_button_add">Add Hide Keys Button</string>
+    <string name="hide_keys_button_title">Type: Hide Keys Button</string>
+    <string name="hide_keys_section_settings">Hide Keys Settings</string>
+    <string name="hide_keys_child_visible">Show Hidden Buttons</string>
+    <string name="hide_keys_section_touch_mode">Touch Mode when Invisible</string>
+    <string name="hide_keys_touch_mode_description">Select the touch mode to switch to when buttons are hidden</string>
+    <string name="hide_keys_section_default_touch_mode">Touch Mode When Visible</string>
+    <string name="hide_keys_default_touch_mode_description">Select the touch mode to use when buttons are shown</string>
+    <string name="hide_keys_mode_mouse">Classic Mouse Mode</string>
+    <string name="hide_keys_mode_trackpad">Trackpad Mode</string>
+    <string name="hide_keys_mode_multi_touch">Multi-Touch Mode</string>
+    <string name="hide_keys_section_select_keys">Select Buttons to Hide</string>
+    <string name="hide_keys_select_buttons">Select Buttons</string>
+    <string name="hide_keys_delete_hint">To delete, enter: DELETE</string>
     <string name="layout_page_group_button_text_6db87">Type: Group Button</string>
     <string name="layout_page_group_button_text_b19b4">Hide Button (for wheel use)</string>
     <string name="layout_page_group_button_text_f57fc">Hold to move button</string>
@@ -1282,4 +1297,10 @@
     <string name="seekbar_decrease">Decrease</string>
     <string name="seekbar_increase">Increase</string>
 
+    <string name="crown_stick_special_value">Swip Trigger</string>
+    <string name="crown_stick_special_default">None</string>
+    <string name="crown_stick_press_vibration">Vibrate On Stick Press</string>
+    <string name="crown_stick_special_trigger_radius">Swip Trigger Radius % (100 = Off)</string>
+    <string name="crown_stick_swip_hold_mode">Hold (release when back to center)</string>
+    <string name="crown_stick_swip_toggle_mode">Toggle (stays pressed until finger release)</string>
 </resources>

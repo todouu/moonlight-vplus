@@ -131,7 +131,8 @@
                     android:orientation="horizontal"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical">
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -143,6 +144,26 @@
                         android:id="@+id/page_digital_movable_button_trackpad_mode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <!-- 按下震动 -->
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/page_digital_movable_button_vibration"
+                        android:textSize="13sp"
+                        android:textColor="#CCFFFFFF"/>
+                    <Switch
+                        android:id="@+id/page_digital_movable_button_vibration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"/>
                 </LinearLayout>
             </LinearLayout>
             

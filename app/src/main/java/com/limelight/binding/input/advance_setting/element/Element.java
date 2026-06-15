@@ -60,11 +60,12 @@ public abstract class Element extends View {
     public static final int ELEMENT_TYPE_INVISIBLE_ANALOG_STICK = 32;
     public static final int ELEMENT_TYPE_INVISIBLE_DIGITAL_STICK = 33;
     public static final int ELEMENT_TYPE_SIMPLIFY_PERFORMANCE = 50;
+    public final static int ELEMENT_TYPE_WHEEL_PAD = 54;
+    public static final int ELEMENT_TYPE_HIDE_KEYS_BUTTON = 60;
 
     public static final int EDIT_COLOR_EDIT = 0xf0dc143c;
     public static final int EDIT_COLOR_SELECT = 0xfffe9900;
     public static final int EDIT_COLOR_SELECTED = 0xff0112ff;
-    public final static int ELEMENT_TYPE_WHEEL_PAD = 54;
 
 
     // 在编辑模式下，如果元素被按住超过系统定义的长按时间，就允许拖动，

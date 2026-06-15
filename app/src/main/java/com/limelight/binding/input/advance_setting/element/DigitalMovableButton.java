@@ -86,6 +86,7 @@ public class DigitalMovableButton extends Element {
 
     private int enableTouch = 0; // 0 = 按钮, 1 = 摇杆。
     private boolean isTrackpadMode = false;
+    private boolean enableVibration = true; // 按下震动，默认启用
 
     private int radius;
     private int sense;
@@ -193,6 +194,12 @@ public class DigitalMovableButton extends Element {
                         this.isTrackpadMode = (Boolean) trackpadValue;
                     }
                 }
+                if (extraAttrs != null && extraAttrs.containsKey("enableVibration")) {
+                    Object vibrationValue = extraAttrs.get("enableVibration");
+                    if (vibrationValue instanceof Boolean) {
+                        this.enableVibration = (Boolean) vibrationValue;
+                    }
+                }
             } catch (Exception e) {
                 // 如果 JSON 格式错误，打印错误日志并使用默认值继续运行
                 e.printStackTrace();
@@ -243,7 +250,7 @@ public class DigitalMovableButton extends Element {
             if (confirmedMove) return;
             confirmedDrag = true;
             listener.onClick();
-            elementController.buttonVibrator();
+            if (enableVibration) elementController.buttonVibrator();
             setPressed(true);
             invalidate();
         };
@@ -367,7 +374,7 @@ public class DigitalMovableButton extends Element {
                 if (confirmedDrag) {
                     listener.onRelease();
                 } else if (!confirmedMove) {
-                    elementController.buttonVibrator();
+                    if (enableVibration) elementController.buttonVibrator();
                     listener.onClick();
                     handler.postDelayed(listener::onRelease, 50);
                 }
@@ -383,7 +390,7 @@ public class DigitalMovableButton extends Element {
         int action = event.getActionMasked();
         switch (action) {
             case MotionEvent.ACTION_DOWN: {
-                elementController.buttonVibrator();
+                if (enableVibration) elementController.buttonVibrator();
                 lastX = event.getX();
                 lastY = event.getY();
                 setPressed(true);
@@ -414,7 +421,7 @@ public class DigitalMovableButton extends Element {
         int action = event.getActionMasked();
         switch (action) {
             case MotionEvent.ACTION_DOWN:
-                elementController.buttonVibrator();
+                if (enableVibration) elementController.buttonVibrator();
                 setPressed(true);
                 onClickCallback();
                 invalidate();
@@ -478,6 +485,7 @@ public class DigitalMovableButton extends Element {
         // --- 创建并保存 extra_attributes 的 JSON 字符串 ---
         Map<String, Object> extraAttrs = new HashMap<>();
         extraAttrs.put("isTrackpadMode", isTrackpadMode);
+        extraAttrs.put("enableVibration", enableVibration);
 
         Gson gson = new Gson();
         String json = gson.toJson(extraAttrs);
@@ -508,6 +516,7 @@ public class DigitalMovableButton extends Element {
         View joystickModeContainer = digitalMovableButtonPage.findViewById(R.id.page_digital_movable_button_joystick_mode_container);
         Switch trackpadModeSwitch = digitalMovableButtonPage.findViewById(R.id.page_digital_movable_button_trackpad_mode);
         View trackpadModeContainer = digitalMovableButtonPage.findViewById(R.id.page_digital_movable_button_trackpad_mode_container);
+        Switch vibrationSwitch = digitalMovableButtonPage.findViewById(R.id.page_digital_movable_button_vibration);
         TextView valueTextView = digitalMovableButtonPage.findViewById(R.id.page_digital_movable_button_value);
 
         Runnable updateValueViewState = () -> {
@@ -578,6 +587,13 @@ public class DigitalMovableButton extends Element {
 
             // 更新键值UI状态
             updateValueViewState.run();
+            save();
+        });
+
+        // --- 震动开关 ---
+        vibrationSwitch.setChecked(enableVibration);
+        vibrationSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            enableVibration = isChecked;
             save();
         });
 
@@ -797,7 +813,7 @@ public class DigitalMovableButton extends Element {
             contentValues.put(COLUMN_STRING_ELEMENT_TEXT, text);
             contentValues.put(COLUMN_STRING_ELEMENT_VALUE, value);
             contentValues.put(COLUMN_INT_ELEMENT_MODE, enableTouch);
-            contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(new HashMap<String, Object>() {{ put("isTrackpadMode", isTrackpadMode); }}));
+            contentValues.put(COLUMN_STRING_EXTRA_ATTRIBUTES, new Gson().toJson(new HashMap<String, Object>() {{ put("isTrackpadMode", isTrackpadMode); put("enableVibration", enableVibration); }}));
             contentValues.put(COLUMN_INT_ELEMENT_SENSE, sense);
             contentValues.put(COLUMN_INT_ELEMENT_WIDTH, getElementWidth());
             contentValues.put(COLUMN_INT_ELEMENT_HEIGHT, getElementHeight());
