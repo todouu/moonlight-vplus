@@ -61,6 +61,96 @@ Java_com_limelight_nvstream_jni_MoonBridge_sendTouchEvent(JNIEnv *env, jclass cl
 }
 
 JNIEXPORT jint JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_sendTouchpadEvent(JNIEnv *env, jclass clazz,
+                                                             jbyte eventType, jint pointerId,
+                                                             jfloat x, jfloat y, jfloat pressure,
+                                                             jfloat contactAreaMajor, jfloat contactAreaMinor,
+                                                             jshort rotation, jshort deviceWidthMm,
+                                                             jshort deviceHeightMm, jbyte buttonState) {
+    return LiSendTouchpadEvent(eventType, pointerId, x, y, pressure,
+                               contactAreaMajor, contactAreaMinor, rotation,
+                               deviceWidthMm, deviceHeightMm, buttonState);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_sendTouchpadFrameEvent(JNIEnv *env, jclass clazz,
+                                                                  jbyte contactCount,
+                                                                  jbyteArray eventTypesArray,
+                                                                  jintArray pointerIdsArray,
+                                                                  jfloatArray xArray,
+                                                                  jfloatArray yArray,
+                                                                  jfloatArray pressureArray,
+                                                                  jshort rotation,
+                                                                  jshort deviceWidthMm,
+                                                                  jshort deviceHeightMm,
+                                                                  jbyte buttonState) {
+    uint8_t count = (uint8_t)contactCount;
+    uint8_t eventTypes[SS_TOUCHPAD_FRAME_MAX_CONTACTS];
+    uint32_t pointerIds[SS_TOUCHPAD_FRAME_MAX_CONTACTS];
+    float x[SS_TOUCHPAD_FRAME_MAX_CONTACTS];
+    float y[SS_TOUCHPAD_FRAME_MAX_CONTACTS];
+    float pressure[SS_TOUCHPAD_FRAME_MAX_CONTACTS];
+
+    if (count > SS_TOUCHPAD_FRAME_MAX_CONTACTS) {
+        return -3;
+    }
+
+    if (count > 0 &&
+        (eventTypesArray == NULL || pointerIdsArray == NULL || xArray == NULL || yArray == NULL || pressureArray == NULL ||
+         (*env)->GetArrayLength(env, eventTypesArray) < count ||
+         (*env)->GetArrayLength(env, pointerIdsArray) < count ||
+         (*env)->GetArrayLength(env, xArray) < count ||
+         (*env)->GetArrayLength(env, yArray) < count ||
+         (*env)->GetArrayLength(env, pressureArray) < count)) {
+        return -3;
+    }
+
+    if (count > 0) {
+        jbyte* eventTypesJava = (*env)->GetByteArrayElements(env, eventTypesArray, NULL);
+        jint* pointerIdsJava = (*env)->GetIntArrayElements(env, pointerIdsArray, NULL);
+        jfloat* xJava = (*env)->GetFloatArrayElements(env, xArray, NULL);
+        jfloat* yJava = (*env)->GetFloatArrayElements(env, yArray, NULL);
+        jfloat* pressureJava = (*env)->GetFloatArrayElements(env, pressureArray, NULL);
+
+        if (eventTypesJava == NULL || pointerIdsJava == NULL || xJava == NULL || yJava == NULL || pressureJava == NULL) {
+            if (eventTypesJava != NULL) {
+                (*env)->ReleaseByteArrayElements(env, eventTypesArray, eventTypesJava, JNI_ABORT);
+            }
+            if (pointerIdsJava != NULL) {
+                (*env)->ReleaseIntArrayElements(env, pointerIdsArray, pointerIdsJava, JNI_ABORT);
+            }
+            if (xJava != NULL) {
+                (*env)->ReleaseFloatArrayElements(env, xArray, xJava, JNI_ABORT);
+            }
+            if (yJava != NULL) {
+                (*env)->ReleaseFloatArrayElements(env, yArray, yJava, JNI_ABORT);
+            }
+            if (pressureJava != NULL) {
+                (*env)->ReleaseFloatArrayElements(env, pressureArray, pressureJava, JNI_ABORT);
+            }
+            return -1;
+        }
+
+        for (uint8_t i = 0; i < count; i++) {
+            eventTypes[i] = (uint8_t)eventTypesJava[i];
+            pointerIds[i] = (uint32_t)pointerIdsJava[i];
+            x[i] = xJava[i];
+            y[i] = yJava[i];
+            pressure[i] = pressureJava[i];
+        }
+
+        (*env)->ReleaseByteArrayElements(env, eventTypesArray, eventTypesJava, JNI_ABORT);
+        (*env)->ReleaseIntArrayElements(env, pointerIdsArray, pointerIdsJava, JNI_ABORT);
+        (*env)->ReleaseFloatArrayElements(env, xArray, xJava, JNI_ABORT);
+        (*env)->ReleaseFloatArrayElements(env, yArray, yJava, JNI_ABORT);
+        (*env)->ReleaseFloatArrayElements(env, pressureArray, pressureJava, JNI_ABORT);
+    }
+
+    return LiSendTouchpadFrameEvent(count, eventTypes, pointerIds, x, y, pressure,
+                                    rotation, deviceWidthMm, deviceHeightMm, buttonState);
+}
+
+JNIEXPORT jint JNICALL
 Java_com_limelight_nvstream_jni_MoonBridge_sendPenEvent(JNIEnv *env, jclass clazz, jbyte eventType,
                                                         jbyte toolType, jbyte penButtons,
                                                         jfloat x, jfloat y, jfloat pressureOrDistance,
@@ -240,6 +330,11 @@ Java_com_limelight_nvstream_jni_MoonBridge_getEstimatedRttInfo(JNIEnv *env, jcla
     return ((uint64_t)rtt << 32U) | variance;
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_getRtpVideoBytesReceived(JNIEnv *env, jclass clazz) {
+    return (jlong)LiGetRTPVideoBytesReceived();
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_limelight_nvstream_jni_MoonBridge_getLaunchUrlQueryParameters(JNIEnv *env, jclass clazz) {
     return (*env)->NewStringUTF(env, LiGetLaunchUrlQueryParameters());
@@ -294,6 +389,11 @@ Java_com_limelight_nvstream_jni_MoonBridge_getHostFeatureFlags(JNIEnv *env, jcla
 }
 
 JNIEXPORT jint JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_setCursorMode(JNIEnv *env, jclass clazz, jint cursorMode) {
+    return LiSetCursorMode(cursorMode);
+}
+
+JNIEXPORT jint JNICALL
 Java_com_limelight_nvstream_jni_MoonBridge_getNegotiatedAudioCodec(JNIEnv *env, jclass clazz) {
     return LiGetNegotiatedAudioCodec();
 }
@@ -321,20 +421,20 @@ Java_com_limelight_nvstream_jni_MoonBridge_sendMicrophoneOpusData(JNIEnv *env, j
     }
     
     jsize length = (*env)->GetArrayLength(env, opusData);
-    if (length <= 0) {
+    if (length <= 0 || length > MAX_MIC_PACKET_SIZE) {
         return -1;
     }
-    
-    jbyte* data = (*env)->GetByteArrayElements(env, opusData, NULL);
-    if (data == NULL) {
+
+    // The common-c encryption helper appends block padding in place. JNI arrays
+    // only expose their logical length, so copy into client-owned storage with
+    // enough tail room before handing the payload to common-c.
+    unsigned char data[ROUND_TO_PKCS7_PADDED_LEN(MAX_MIC_PACKET_SIZE)];
+    (*env)->GetByteArrayRegion(env, opusData, 0, length, (jbyte*)data);
+    if ((*env)->ExceptionCheck(env)) {
         return -1;
     }
-    
-    int result = sendMicrophoneOpusData((const unsigned char*)data, (int)length);
-    
-    (*env)->ReleaseByteArrayElements(env, opusData, data, JNI_ABORT);
-    
-    return result;
+
+    return sendMicrophoneOpusData(data, (int)length);
 }
 
 JNIEXPORT jboolean JNICALL
@@ -342,23 +442,29 @@ Java_com_limelight_nvstream_jni_MoonBridge_isMicrophoneEncryptionEnabled(JNIEnv 
     return isMicrophoneEncryptionEnabled() ? JNI_TRUE : JNI_FALSE;
 }
 
-// ==================== Bass Energy Analyzer Control ====================
+// ==================== Audio Haptics SDK Control ====================
 
-#include "bass_energy_bridge.h"
+#include "audio_haptics_android_adapter_bridge.h"
 
 JNIEXPORT void JNICALL
-Java_com_limelight_nvstream_jni_MoonBridge_setBassEnergyEnabled(JNIEnv *env, jclass clazz, jboolean enabled) {
-    bass_energy_set_enabled(enabled ? 1 : 0);
+Java_com_limelight_nvstream_jni_MoonBridge_setAudioHapticsSceneMode(JNIEnv *env, jclass clazz, jint mode) {
+    (void)env;
+    (void)clazz;
+    audio_haptics_android_adapter_set_scene_mode(mode);
 }
 
 JNIEXPORT void JNICALL
-Java_com_limelight_nvstream_jni_MoonBridge_setBassEnergySensitivity(JNIEnv *env, jclass clazz, jfloat sensitivity) {
-    bass_energy_set_sensitivity(sensitivity);
+Java_com_limelight_nvstream_jni_MoonBridge_setAudioHapticsOutputEnabled(JNIEnv *env, jclass clazz, jboolean enabled) {
+    (void)env;
+    (void)clazz;
+    audio_haptics_android_adapter_set_enabled(enabled ? 1 : 0);
 }
 
 JNIEXPORT void JNICALL
-Java_com_limelight_nvstream_jni_MoonBridge_setBassEnergySceneMode(JNIEnv *env, jclass clazz, jint mode) {
-    bass_energy_set_scene_mode(mode);
+Java_com_limelight_nvstream_jni_MoonBridge_setAudioHapticsSessionHandle(JNIEnv *env, jclass clazz, jlong handle) {
+    (void)env;
+    (void)clazz;
+    audio_haptics_android_adapter_set_session_handle((uint64_t)handle);
 }
 
 // ==================== Surface DataSpace Control ====================

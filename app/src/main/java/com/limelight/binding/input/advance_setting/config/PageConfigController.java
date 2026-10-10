@@ -122,7 +122,7 @@ public class PageConfigController {
             public void onClick(View v) {
                 SuperPageLayout pageWindow = (SuperPageLayout) LayoutInflater.from(context).inflate(R.layout.page_window,null);
                 TextView title = pageWindow.findViewById(R.id.window_title);
-                String titleString = "是否删除:" + configNames.get(configIds.indexOf(currentConfigId));
+                String titleString = context.getString(R.string.crown_delete_prefix) + configNames.get(configIds.indexOf(currentConfigId));
                 title.setText(getCrownDialogTitle(titleString));
                 pageWindow.findViewById(R.id.window_edittext).setVisibility(View.GONE);
                 //窗口确认按钮
@@ -157,8 +157,12 @@ public class PageConfigController {
         pageConfig.findViewById(R.id.exit_crown_config_button).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // 保存/关闭配置页后继续保留王冠返回菜单模式
-                ((Game)context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.CROWN_MODE);
+                // 一次性模式（NO_MENU_LOCKED）退出后回到游戏菜单，否则保持王冠模式
+                if (((Game)context).getCurrentBackKeyMenuMode() == Game.BackKeyMenuMode.NO_MENU_LOCKED) {
+                    ((Game)context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.GAME_MENU);
+                } else {
+                    ((Game)context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.CROWN_MODE);
+                }
 
                 // 关闭当前的高级设置页面，相当于按返回键
                 controllerManager.getSuperPagesController().returnOperation();
@@ -196,6 +200,25 @@ public class PageConfigController {
         adapter.setDropDownViewResource(R.layout.crown_spinner_item);
         configSelectSpinner.setAdapter(adapter);
 
+    }
+
+    public void switchDirectlyToConfig(long targetId) {
+        // A deleted binding disables only this action. Never select by name or fall back.
+        if (currentConfigId.equals(targetId)
+                || !controllerManager.getSuperConfigDatabaseHelper().queryAllConfigIds().contains(targetId)) {
+            return;
+        }
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putLong(CURRENT_CONFIG_KEY, targetId).apply();
+        initConfig();
+    }
+
+    public List<Long> getDirectSwitchTargetIds() {
+        List<Long> targets = new ArrayList<>();
+        for (Long id : controllerManager.getSuperConfigDatabaseHelper().queryAllConfigIds()) {
+            if (id >= 0L && !id.equals(currentConfigId)) targets.add(id);
+        }
+        return targets;
     }
 
     private void loadCurrentConfig(){

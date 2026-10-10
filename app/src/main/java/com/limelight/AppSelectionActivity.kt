@@ -1,6 +1,5 @@
 package com.limelight
 
-import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
@@ -10,15 +9,19 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.limelight.ui.ThemedActivity
 import com.limelight.computers.ComputerManagerService
+import com.limelight.computers.PairStatePreflight
 import com.limelight.grid.AppGridAdapter
 import com.limelight.nvstream.http.ComputerDetails
 import com.limelight.nvstream.http.NvApp
 import com.limelight.nvstream.http.NvHTTP
+import com.limelight.nvstream.http.PairingManager
 import com.limelight.nvstream.wol.WakeOnLanSender
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.ui.AdapterRecyclerBridge
 import com.limelight.utils.CacheHelper
+import com.limelight.utils.HostCacheKey
 import com.limelight.utils.ServerHelper
 import com.limelight.utils.SpinnerDialog
 import com.limelight.utils.UiHelper
@@ -34,7 +37,7 @@ import org.xmlpull.v1.XmlPullParserException
 import java.io.IOException
 import java.io.StringReader
 
-class AppSelectionActivity : Activity() {
+class AppSelectionActivity : ThemedActivity() {
 
     private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pollingCollectJob: Job? = null
@@ -154,15 +157,16 @@ class AppSelectionActivity : Activity() {
             val comp = computer!!
             val binder = managerBinder!!
 
-            if (comp.state == ComputerDetails.State.ONLINE && comp.activeAddress != null) {
+            if (comp.state == ComputerDetails.State.ONLINE &&
+                comp.pairState == PairingManager.PairState.PAIRED &&
+                comp.activeAddress != null
+            ) {
                 if (comp.runningGameId != 0 && comp.runningGameId != obj.app.appId) {
                     UiHelper.displayQuitConfirmationDialog(this, {
-                        ServerHelper.doStart(this, obj.app, comp, binder)
-                        finish()
+                        startAppAfterPairStateCheck(obj.app, comp, binder)
                     }, null)
                 } else {
-                    ServerHelper.doStart(this, obj.app, comp, binder)
-                    finish()
+                    startAppAfterPairStateCheck(obj.app, comp, binder)
                 }
             } else {
                 pendingAppLaunch = obj
@@ -194,7 +198,10 @@ class AppSelectionActivity : Activity() {
         computer = details
 
         val pending = pendingAppLaunch ?: return
-        if (details.state == ComputerDetails.State.ONLINE && details.activeAddress != null) {
+        if (details.state == ComputerDetails.State.ONLINE &&
+            details.pairState == PairingManager.PairState.PAIRED &&
+            details.activeAddress != null
+        ) {
             if (connectingDialog != null) {
                 connectingDialog?.dismiss()
                 connectingDialog = null
@@ -204,20 +211,35 @@ class AppSelectionActivity : Activity() {
             val binder = managerBinder ?: return
             if (comp.runningGameId != 0 && comp.runningGameId != pending.app.appId) {
                 UiHelper.displayQuitConfirmationDialog(this@AppSelectionActivity, {
-                    ServerHelper.doStart(this@AppSelectionActivity, pending.app, comp, binder)
-                    finish()
+                    startAppAfterPairStateCheck(pending.app, comp, binder)
                 }, null)
             } else {
-                ServerHelper.doStart(this@AppSelectionActivity, pending.app, comp, binder)
-                finish()
+                startAppAfterPairStateCheck(pending.app, comp, binder)
             }
+        }
+    }
+
+    private fun startAppAfterPairStateCheck(
+        app: NvApp,
+        comp: ComputerDetails,
+        binder: ComputerManagerService.ComputerManagerBinder
+    ) {
+        uiScope.launch {
+            if (PairStatePreflight.isConfirmedNotPaired(comp, binder, "App selection start")) {
+                Toast.makeText(this@AppSelectionActivity, R.string.scut_not_paired, Toast.LENGTH_SHORT).show()
+                finish()
+                return@launch
+            }
+            ServerHelper.doStart(this@AppSelectionActivity, app, comp, binder)
+            finish()
         }
     }
 
     private fun getAppListFromCache(uuid: String): List<NvApp>? {
         return try {
+            val cacheKey = HostCacheKey.fromUuid(uuid) ?: return null
             val rawAppList = CacheHelper.readInputStreamToString(
-                CacheHelper.openCacheFileForInput(cacheDir, "applist", uuid)
+                CacheHelper.openCacheFileForInput(cacheDir, "applist", cacheKey)
             )
             if (rawAppList.isEmpty()) null else NvHTTP.getAppListByReader(StringReader(rawAppList))
         } catch (e: IOException) {

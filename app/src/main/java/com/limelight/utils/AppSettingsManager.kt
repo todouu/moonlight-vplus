@@ -160,6 +160,9 @@ class AppSettingsManager(private val context: Context) {
         if (settings.showBitrateCard) {
             summary.append(" | ").append(context.getString(R.string.setting_bitrate_card_enabled))
         }
+        if (settings.showAudioHapticsCard) {
+            summary.append(" | ").append(context.getString(R.string.setting_audio_haptics_card_enabled))
+        }
         if (settings.showGyroCard) {
             summary.append(" | ").append(context.getString(R.string.setting_gyro_card_enabled))
         }
@@ -221,12 +224,21 @@ class AppSettingsManager(private val context: Context) {
             put("enableHdrHighBrightness", settings.enableHdrHighBrightness)
             put("enableMic", settings.enableMic)
             put("micBitrate", settings.micBitrate)
+            put("micVolumeProcessingEnabled", settings.micVolumeProcessingEnabled)
+            put("micGainEnabled", settings.micGainEnabled)
+            put("micGainDb", settings.micGainDb)
+            put("micBalanceEnabled", settings.micBalanceEnabled)
+            put("micBalanceTargetPercent", settings.micBalanceTargetPercent)
+            put("micVoiceEnhancementEnabled", settings.micVoiceEnhancementEnabled)
             put("enableNativeMousePointer", settings.enableNativeMousePointer)
             put("gyroSensitivityMultiplier", settings.gyroSensitivityMultiplier.toDouble())
             put("gyroInvertXAxis", settings.gyroInvertXAxis)
             put("gyroInvertYAxis", settings.gyroInvertYAxis)
             put("gyroActivationKeyCode", settings.gyroActivationKeyCode)
+            put("gyroToRightStick", settings.gyroToRightStick)
+            put("gyroToMouse", settings.gyroToMouse)
             put("showBitrateCard", settings.showBitrateCard)
+            put("showAudioHapticsCard", settings.showAudioHapticsCard)
             put("showGyroCard", settings.showGyroCard)
             put("showQuickKeyCard", settings.showQuickKeyCard)
             put("timestamp", System.currentTimeMillis())
@@ -246,6 +258,7 @@ class AppSettingsManager(private val context: Context) {
         settings.reverseResolution = false
         settings.rotableScreen = false
         settings.showBitrateCard = false
+        settings.showAudioHapticsCard = false
         settings.showGyroCard = false
         settings.showQuickKeyCard = false
 
@@ -269,12 +282,23 @@ class AppSettingsManager(private val context: Context) {
         settings.enableHdrHighBrightness = settingsJson.optBoolean("enableHdrHighBrightness", false)
         settings.enableMic = settingsJson.optBoolean("enableMic", false)
         settings.micBitrate = settingsJson.optInt("micBitrate", 96)
+        settings.micVolumeProcessingEnabled = settingsJson.optBoolean("micVolumeProcessingEnabled", false)
+        settings.micGainEnabled = settingsJson.optBoolean("micGainEnabled", false)
+        settings.micGainDb = settingsJson.optInt("micGainDb", 0).coerceIn(-20, 20)
+        settings.micBalanceEnabled = settingsJson.optBoolean("micBalanceEnabled", false) &&
+                !settings.micGainEnabled
+        settings.micBalanceTargetPercent = settingsJson.optInt("micBalanceTargetPercent", 50).coerceIn(1, 100)
+        settings.micVoiceEnhancementEnabled = settingsJson.optBoolean("micVoiceEnhancementEnabled", true)
         settings.enableNativeMousePointer = settingsJson.optBoolean("enableNativeMousePointer", false)
         settings.gyroSensitivityMultiplier = settingsJson.optDouble("gyroSensitivityMultiplier", 1.0).toFloat()
         settings.gyroInvertXAxis = settingsJson.optBoolean("gyroInvertXAxis", false)
         settings.gyroInvertYAxis = settingsJson.optBoolean("gyroInvertYAxis", false)
         settings.gyroActivationKeyCode = settingsJson.optInt("gyroActivationKeyCode", KeyEvent.KEYCODE_BUTTON_L2)
+        settings.gyroToMouse = settingsJson.optBoolean("gyroToMouse", false)
+        settings.gyroToRightStick = !settings.gyroToMouse &&
+            settingsJson.optBoolean("gyroToRightStick", false)
         settings.showBitrateCard = settingsJson.optBoolean("showBitrateCard", true)
+        settings.showAudioHapticsCard = settingsJson.optBoolean("showAudioHapticsCard", false)
         settings.showGyroCard = settingsJson.optBoolean("showGyroCard", true)
         settings.showQuickKeyCard = settingsJson.optBoolean("showQuickKeyCard", true)
 
@@ -288,6 +312,7 @@ class AppSettingsManager(private val context: Context) {
             parent: Activity, app: NvApp,
             computer: ComputerDetails?,
             managerBinder: ComputerManagerService.ComputerManagerBinder,
+            useVdd: Boolean? = null,
             forceResumeCurrentSession: Boolean = false
     ): Intent {
         val useLastSettingsEnabled = isUseLastSettingsEnabled
@@ -301,6 +326,7 @@ class AppSettingsManager(private val context: Context) {
                     computer,
                     managerBinder,
                     lastSettings,
+                    useVdd = useVdd,
                     forceResumeCurrentSession = forceResumeCurrentSession
                 )
             }
@@ -311,6 +337,7 @@ class AppSettingsManager(private val context: Context) {
             app,
             computer!!,
             managerBinder,
+            useVdd = useVdd,
             forceResumeCurrentSession = forceResumeCurrentSession
         )
     }
@@ -334,12 +361,24 @@ class AppSettingsManager(private val context: Context) {
             prefConfig.enableHdrHighBrightness = intent.getBooleanExtra(INTENT_LAST_SETTINGS_ENABLE_HDR_HIGH_BRIGHTNESS, prefConfig.enableHdrHighBrightness)
             prefConfig.enableMic = intent.getBooleanExtra(INTENT_LAST_SETTINGS_ENABLE_MIC, prefConfig.enableMic)
             prefConfig.micBitrate = intent.getIntExtra(INTENT_LAST_SETTINGS_MIC_BITRATE, prefConfig.micBitrate)
+            prefConfig.micVolumeProcessingEnabled = intent.getBooleanExtra(INTENT_LAST_SETTINGS_MIC_VOLUME_PROCESSING, prefConfig.micVolumeProcessingEnabled)
+            prefConfig.micGainEnabled = intent.getBooleanExtra(INTENT_LAST_SETTINGS_MIC_GAIN_ENABLED, prefConfig.micGainEnabled)
+            prefConfig.micGainDb = intent.getIntExtra(INTENT_LAST_SETTINGS_MIC_GAIN_DB, prefConfig.micGainDb).coerceIn(-20, 20)
+            prefConfig.micBalanceEnabled = intent.getBooleanExtra(INTENT_LAST_SETTINGS_MIC_BALANCE_ENABLED, prefConfig.micBalanceEnabled) &&
+                    !prefConfig.micGainEnabled
+            prefConfig.micBalanceTargetPercent = intent.getIntExtra(INTENT_LAST_SETTINGS_MIC_BALANCE_TARGET, prefConfig.micBalanceTargetPercent).coerceIn(1, 100)
+            prefConfig.micVoiceEnhancementEnabled = intent.getBooleanExtra(INTENT_LAST_SETTINGS_MIC_VOICE_ENHANCEMENT, prefConfig.micVoiceEnhancementEnabled)
             prefConfig.enableNativeMousePointer = intent.getBooleanExtra(INTENT_LAST_SETTINGS_ENABLE_NATIVE_MOUSE, prefConfig.enableNativeMousePointer)
             prefConfig.gyroSensitivityMultiplier = intent.getFloatExtra(INTENT_LAST_SETTINGS_GYRO_SENSITIVITY, prefConfig.gyroSensitivityMultiplier)
             prefConfig.gyroInvertXAxis = intent.getBooleanExtra(INTENT_LAST_SETTINGS_GYRO_INVERT_X, prefConfig.gyroInvertXAxis)
             prefConfig.gyroInvertYAxis = intent.getBooleanExtra(INTENT_LAST_SETTINGS_GYRO_INVERT_Y, prefConfig.gyroInvertYAxis)
             prefConfig.gyroActivationKeyCode = intent.getIntExtra(INTENT_LAST_SETTINGS_GYRO_ACTIVATION_KEY, prefConfig.gyroActivationKeyCode)
+            // Mouse mode wins, matching the persisted-preference normalization
+            prefConfig.gyroToMouse = intent.getBooleanExtra(INTENT_LAST_SETTINGS_GYRO_TO_MOUSE, prefConfig.gyroToMouse)
+            prefConfig.gyroToRightStick = !prefConfig.gyroToMouse &&
+                intent.getBooleanExtra(INTENT_LAST_SETTINGS_GYRO_TO_RIGHT_STICK, prefConfig.gyroToRightStick)
             prefConfig.showBitrateCard = intent.getBooleanExtra(INTENT_LAST_SETTINGS_SHOW_BITRATE_CARD, prefConfig.showBitrateCard)
+            prefConfig.showAudioHapticsCard = intent.getBooleanExtra(INTENT_LAST_SETTINGS_SHOW_AUDIO_HAPTICS_CARD, prefConfig.showAudioHapticsCard)
             prefConfig.showGyroCard = intent.getBooleanExtra(INTENT_LAST_SETTINGS_SHOW_GYRO_CARD, prefConfig.showGyroCard)
             prefConfig.showQuickKeyCard = intent.getBooleanExtra(INTENT_LAST_SETTINGS_SHOW_QuickKeyCard, prefConfig.showQuickKeyCard)
 
@@ -380,12 +419,21 @@ class AppSettingsManager(private val context: Context) {
         private const val INTENT_LAST_SETTINGS_ENABLE_HDR_HIGH_BRIGHTNESS = "LastSettingsEnableHdrHighBrightness"
         private const val INTENT_LAST_SETTINGS_ENABLE_MIC = "LastSettingsEnableMic"
         private const val INTENT_LAST_SETTINGS_MIC_BITRATE = "LastSettingsMicBitrate"
+        private const val INTENT_LAST_SETTINGS_MIC_VOLUME_PROCESSING = "LastSettingsMicVolumeProcessing"
+        private const val INTENT_LAST_SETTINGS_MIC_GAIN_ENABLED = "LastSettingsMicGainEnabled"
+        private const val INTENT_LAST_SETTINGS_MIC_GAIN_DB = "LastSettingsMicGainDb"
+        private const val INTENT_LAST_SETTINGS_MIC_BALANCE_ENABLED = "LastSettingsMicBalanceEnabled"
+        private const val INTENT_LAST_SETTINGS_MIC_BALANCE_TARGET = "LastSettingsMicBalanceTarget"
+        private const val INTENT_LAST_SETTINGS_MIC_VOICE_ENHANCEMENT = "LastSettingsMicVoiceEnhancement"
         private const val INTENT_LAST_SETTINGS_ENABLE_NATIVE_MOUSE = "LastSettingsEnableNativeMouse"
         private const val INTENT_LAST_SETTINGS_GYRO_SENSITIVITY = "LastSettingsGyroSensitivity"
         private const val INTENT_LAST_SETTINGS_GYRO_INVERT_X = "LastSettingsGyroInvertX"
         private const val INTENT_LAST_SETTINGS_GYRO_INVERT_Y = "LastSettingsGyroInvertY"
         private const val INTENT_LAST_SETTINGS_GYRO_ACTIVATION_KEY = "LastSettingsGyroActivationKey"
+        private const val INTENT_LAST_SETTINGS_GYRO_TO_RIGHT_STICK = "LastSettingsGyroToRightStick"
+        private const val INTENT_LAST_SETTINGS_GYRO_TO_MOUSE = "LastSettingsGyroToMouse"
         private const val INTENT_LAST_SETTINGS_SHOW_BITRATE_CARD = "LastSettingsShowBitrateCard"
+        private const val INTENT_LAST_SETTINGS_SHOW_AUDIO_HAPTICS_CARD = "LastSettingsShowAudioHapticsCard"
         private const val INTENT_LAST_SETTINGS_SHOW_GYRO_CARD = "LastSettingsShowGyroCard"
         private const val INTENT_LAST_SETTINGS_SHOW_QuickKeyCard = "LastSettingsshowQuickKeyCard"
 
@@ -406,12 +454,21 @@ class AppSettingsManager(private val context: Context) {
             intent.putExtra(INTENT_LAST_SETTINGS_ENABLE_HDR_HIGH_BRIGHTNESS, lastSettings.enableHdrHighBrightness)
             intent.putExtra(INTENT_LAST_SETTINGS_ENABLE_MIC, lastSettings.enableMic)
             intent.putExtra(INTENT_LAST_SETTINGS_MIC_BITRATE, lastSettings.micBitrate)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_VOLUME_PROCESSING, lastSettings.micVolumeProcessingEnabled)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_GAIN_ENABLED, lastSettings.micGainEnabled)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_GAIN_DB, lastSettings.micGainDb)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_BALANCE_ENABLED, lastSettings.micBalanceEnabled)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_BALANCE_TARGET, lastSettings.micBalanceTargetPercent)
+            intent.putExtra(INTENT_LAST_SETTINGS_MIC_VOICE_ENHANCEMENT, lastSettings.micVoiceEnhancementEnabled)
             intent.putExtra(INTENT_LAST_SETTINGS_ENABLE_NATIVE_MOUSE, lastSettings.enableNativeMousePointer)
             intent.putExtra(INTENT_LAST_SETTINGS_GYRO_SENSITIVITY, lastSettings.gyroSensitivityMultiplier)
             intent.putExtra(INTENT_LAST_SETTINGS_GYRO_INVERT_X, lastSettings.gyroInvertXAxis)
             intent.putExtra(INTENT_LAST_SETTINGS_GYRO_INVERT_Y, lastSettings.gyroInvertYAxis)
             intent.putExtra(INTENT_LAST_SETTINGS_GYRO_ACTIVATION_KEY, lastSettings.gyroActivationKeyCode)
+            intent.putExtra(INTENT_LAST_SETTINGS_GYRO_TO_RIGHT_STICK, lastSettings.gyroToRightStick)
+            intent.putExtra(INTENT_LAST_SETTINGS_GYRO_TO_MOUSE, lastSettings.gyroToMouse)
             intent.putExtra(INTENT_LAST_SETTINGS_SHOW_BITRATE_CARD, lastSettings.showBitrateCard)
+            intent.putExtra(INTENT_LAST_SETTINGS_SHOW_AUDIO_HAPTICS_CARD, lastSettings.showAudioHapticsCard)
             intent.putExtra(INTENT_LAST_SETTINGS_SHOW_GYRO_CARD, lastSettings.showGyroCard)
             intent.putExtra(INTENT_LAST_SETTINGS_SHOW_QuickKeyCard, lastSettings.showQuickKeyCard)
         }

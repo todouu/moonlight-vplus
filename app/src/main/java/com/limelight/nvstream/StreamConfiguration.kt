@@ -40,19 +40,32 @@ class StreamConfiguration private constructor() {
         private set
     var hdrMode: Int = 0
         private set
+    var hdrBrightnessOverride: Boolean = false
+        private set
+    var hdrPeakBrightnessNits: Int = 1000
+        private set
     private var persistGamepadsAfterDisconnect: Boolean = false
     private var enableMic: Boolean = false
-    private var useVdd: Boolean = false
+    private var useVdd: Boolean? = null
     private var controlOnly: Boolean = false
+    /** Sunshine extension: ask the host to auto-invoke its touch keyboard. Default = undeclared (null). */
+    private var touchKeyboard: Boolean? = null
     /** Requested audio codec — see [MoonBridge.AUDIO_CODEC_OPUS]/AC3/EAC3. Default = OPUS. */
     var audioCodec: Int = MoonBridge.AUDIO_CODEC_OPUS
         private set
     /** Requested AC3/E-AC3 bitrate in bits/sec. 0 = use server default. */
     var audioBitrate: Int = 0
+    var hostGamepad: String? = null
+        private set
+    var authoredPcmHaptics: Boolean = false
+        private set
+
+    /** Sunshine dynamic HDR negotiation (client opt-in). All zero = legacy client. */
+    var dynamicHdrCaps: Int = MoonBridge.DYNAMIC_HDR_CAPS_NONE
+    var dolbyVisionDirectSurface: Boolean = false
+    var dynamicHdrPreference: Int = MoonBridge.DYNAMIC_HDR_PREFERENCE_AUTOMATIC
         private set
     var customScreenMode: Int = -1
-        private set
-    var customVddScreenMode: Int = 0
         private set
 
     val reqWidth: Int get() = width * hostResolutionScaleX100 / 100
@@ -62,7 +75,8 @@ class StreamConfiguration private constructor() {
     fun getPlayLocalAudio(): Boolean = playLocalAudio
     fun getPersistGamepadsAfterDisconnect(): Boolean = persistGamepadsAfterDisconnect
     fun getEnableMic(): Boolean = enableMic
-    fun getUseVdd(): Boolean = useVdd
+    fun getUseVdd(): Boolean? = useVdd
+    fun getTouchKeyboard(): Boolean? = touchKeyboard
     fun getControlOnly(): Boolean = controlOnly
 
     class Builder {
@@ -99,16 +113,44 @@ class StreamConfiguration private constructor() {
 
         /**
          * Sets the HDR mode for the video stream.
-         * @param hdrMode 0 = SDR (default), 1 = HDR10/PQ (SMPTE ST 2084), 2 = HLG (Hybrid Log-Gamma, ARIB STD-B67)
+         * @param hdrMode Client HDR selection. HDR10+ is mapped to the HDR10/PQ host protocol value.
          */
-        fun setHdrMode(hdrMode: Int): Builder = apply { config.hdrMode = hdrMode }
-        fun setUseVdd(value: Boolean): Builder = apply { config.useVdd = value }
+        fun setHdrMode(hdrMode: Int): Builder = apply {
+            config.hdrMode = HdrModePolicy.toProtocolMode(hdrMode)
+        }
+        fun setHdrBrightnessOverride(enabled: Boolean, peakBrightnessNits: Int): Builder = apply {
+            config.hdrBrightnessOverride = enabled
+            config.hdrPeakBrightnessNits = peakBrightnessNits.coerceIn(300, 4000)
+        }
+        fun setUseVdd(value: Boolean?): Builder = apply { config.useVdd = value }
+        fun setTouchKeyboard(value: Boolean?): Builder = apply { config.touchKeyboard = value }
         fun setEnableMic(enable: Boolean): Builder = apply { config.enableMic = enable }
         fun setControlOnly(controlOnly: Boolean): Builder = apply { config.controlOnly = controlOnly }
         fun setAudioCodec(codec: Int): Builder = apply { config.audioCodec = codec }
+        fun setHostGamepad(value: String?): Builder = apply {
+            require(value == null || value in setOf("auto", "x360", "ds4", "ds5"))
+            config.hostGamepad = value
+        }
+
+        fun setAuthoredPcmHaptics(enabled: Boolean): Builder = apply { config.authoredPcmHaptics = enabled }
+
         fun setAudioBitrate(bitrate: Int): Builder = apply { config.audioBitrate = bitrate }
+
+        /**
+         * Opts this session into the Sunshine dynamic HDR negotiation. Callers
+         * must have probed real device capabilities; a legacy client simply
+         * never calls this and the host keeps its historical behavior.
+         */
+        fun setDynamicHdrNegotiation(
+            caps: Int,
+            dolbyVisionDirectSurface: Boolean,
+            preference: Int,
+        ): Builder = apply {
+            config.dynamicHdrCaps = caps
+            config.dolbyVisionDirectSurface = dolbyVisionDirectSurface
+            config.dynamicHdrPreference = preference
+        }
         fun setCustomScreenMode(customScreenMode: Int): Builder = apply { config.customScreenMode = customScreenMode }
-        fun setCustomVddScreenMode(customVddScreenMode: Int): Builder = apply { config.customVddScreenMode = customVddScreenMode }
 
         fun build(): StreamConfiguration = config
     }

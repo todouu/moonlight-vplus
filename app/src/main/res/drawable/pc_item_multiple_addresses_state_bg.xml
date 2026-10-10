@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:bottom="20dp" android:left="0dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="-45"
+                android:centerColor="?attr/pcDecorStackStateBackCenter"
+                android:endColor="?attr/pcDecorStackStateBackEnd"
+                android:startColor="?attr/pcDecorStackStateBackStart" />
+            <corners android:radius="@dimen/corner_radius_medium" />
+        </shape>
+    </item>
+
+    <item android:bottom="10dp" android:left="0dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="-45"
+                android:centerColor="?attr/pcDecorStackStateMidCenter"
+                android:endColor="?attr/pcDecorStackStateMidEnd"
+                android:startColor="?attr/pcDecorStackStateMidStart" />
+            <corners android:radius="@dimen/corner_radius_medium" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="-45"
+                android:centerColor="?attr/pcDecorStackStateFrontCenter"
+                android:endColor="?attr/pcDecorStackStateFrontEnd"
+                android:startColor="?attr/pcDecorStackStateFrontStart" />
+            <corners android:radius="@dimen/corner_radius_medium" />
+            <stroke
+                android:width="2dp"
+                android:color="@color/pc_item_outline_focused" />
+        </shape>
+    </item>
+</layer-list>

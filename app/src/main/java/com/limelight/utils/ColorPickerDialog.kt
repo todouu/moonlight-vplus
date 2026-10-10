@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import com.limelight.R
 import kotlin.math.max
 import kotlin.math.min
+import com.limelight.utils.UiHelper
 
 class ColorPickerDialog(
     context: Context,
@@ -63,6 +64,7 @@ class ColorPickerDialog(
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
+        AppDialogStyler.installDismissKeys(this)
 
         Color.colorToHSV(initialColor, currentHsv)
         currentAlpha = Color.alpha(initialColor)
@@ -71,7 +73,7 @@ class ColorPickerDialog(
             orientation = LinearLayout.HORIZONTAL
             background = rounded(
                 color(R.color.crown_panel_background),
-                dpToPx(14).toFloat(),
+                context.resources.getDimension(R.dimen.corner_radius_overlay),
                 color(R.color.crown_panel_border)
             )
             setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14))
@@ -202,9 +204,9 @@ class ColorPickerDialog(
         val seekBar = SeekBar(context).apply {
             this.max = max
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                progressTintList = android.content.res.ColorStateList.valueOf(color(R.color.theme_pink_primary))
+                progressTintList = android.content.res.ColorStateList.valueOf(UiHelper.accentColor(context))
                 progressBackgroundTintList = android.content.res.ColorStateList.valueOf(color(R.color.crown_input_border))
-                thumbTintList = android.content.res.ColorStateList.valueOf(color(R.color.theme_pink_primary))
+                thumbTintList = android.content.res.ColorStateList.valueOf(UiHelper.accentColor(context))
             }
         }
         row.addView(seekBar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {

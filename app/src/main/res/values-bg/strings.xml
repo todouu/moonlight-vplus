@@ -140,4 +140,38 @@
     <string name="title_checkbox_touchscreen_trackpad">Използване на сензорния екран като тракпад</string>
     <string name="title_checkbox_multi_controller">Автоматично откриване на наличен контролер</string>
     <string name="summary_checkbox_multi_controller">Премахването на отметката от тази опция принуждава контролер винаги да присъства</string>
+    <string name="title_screen_combination_mode">Настройки за комбинация на екрани</string>
+    <string name="summary_screen_combination_mode">Управление на дисплеите на Foundation Sunshine</string>
+    <string name="screen_combination_mode_dialog_subtitle">Отнася се за управлението на дисплеите на Foundation Sunshine</string>
+    <string name="screen_mode_host_default">Следване на хоста</string>
+    <string name="screen_mode_no_operation">Режим без действие</string>
+    <string name="screen_mode_auto_activate">Режим на активиране</string>
+    <string name="screen_mode_primary_streaming">Режим на стрийминг от основен дисплей</string>
+    <string name="screen_mode_secondary_streaming">Режим на стрийминг от вторичен дисплей</string>
+    <string name="screen_mode_exclusive_streaming">Режим на стрийминг с ексклузивен дисплей</string>
+    <string name="screen_mode_host_default_desc">Използва настройката на Sunshine хоста, без да я презаписва.</string>
+    <string name="screen_mode_no_operation_desc">Запазва текущото оформление на дисплеите.</string>
+    <string name="screen_mode_auto_activate_desc">Активира избрания дисплей за стрийминг.</string>
+    <string name="screen_mode_primary_streaming_desc">Активира избрания дисплей и го задава като основен.</string>
+    <string name="screen_mode_secondary_streaming_desc">Запазва физическия дисплей като основен и използва Foundation дисплея като вторичен.</string>
+    <string name="screen_mode_exclusive_streaming_desc">Използва само избрания дисплей и изключва другите дисплеи.</string>
+    <string name="title_config_sync_backup_password">Парола за шифроване на резервно копие</string>
+    <string name="category_help">Помощ</string>
+    <string name="title_document_handbook">Документация</string>
+    <string name="summary_document_handbook">Преглед на свързаната документация</string>
+    <string name="title_about_us">За нас</string>
+    <string name="title_checkbox_mic_volume_processing">Обработка на силата на звука на микрофона</string>
+    <string name="summary_checkbox_mic_volume_processing">Регулирайте силата на звука на микрофона, преди да бъде изпратен към хоста. Фиксираното усилване и балансирането на звука се изключват взаимно.</string>
+    <string name="title_checkbox_mic_gain">Усилване на звука</string>
+    <string name="summary_checkbox_mic_gain">Регулирайте силата на звука на микрофона с фиксирана стойност. Положителните стойности го усилват, а отрицателните го намаляват.</string>
+    <string name="title_seekbar_mic_gain">Усилване</string>
+    <string name="summary_seekbar_mic_gain">Задайте фиксираното усилване. 0 dB запазва първоначалната сила на звука и е в средата на плъзгача.</string>
+    <string name="suffix_seekbar_mic_gain_db">dB</string>
+    <string name="title_checkbox_mic_balance">Балансиране на звука</string>
+    <string name="summary_checkbox_mic_balance">Компресира силния входен сигнал, за да намали колебанията на звука и риска от изрязване.</string>
+    <string name="title_seekbar_mic_balance">Компенсация на изхода</string>
+    <string name="summary_seekbar_mic_balance" formatted="false">Задайте компенсиращото усилване след балансиране на звука. 50% съответства на +4 dB и е препоръчителната стойност.</string>
+    <string name="suffix_seekbar_mic_balance_target" formatted="false">%</string>
+    <string name="title_checkbox_mic_voice_enhancement">Подобряване на гласа</string>
+    <string name="summary_checkbox_mic_voice_enhancement">Намалява нискочестотния шум и подобрява яснотата на речта. Налично е при фиксирано усилване и балансиране на звука.</string>
 </resources>

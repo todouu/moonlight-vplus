@@ -81,7 +81,6 @@
     <string name="title_audio_config_list">Configurações de som Surround</string>
     <string name="title_checkbox_enable_audiofx">Ativar sistema de suporte à equalização</string>
     <string name="title_checkbox_multi_controller">Detecção automática de gamepad</string>
-    <string name="summary_checkbox_vibrate_fallback">Vibra o seu aparelho para emular rumble se o seu gamepad não suportar</string>
     <string name="title_seekbar_deadzone">Ajustar zona morta do analógico</string>
     <string name="summary_checkbox_enable_audiofx">Permitir que efeitos de audio funcionem durante o streaming, pode acrescentar latência de audio</string>
     <string name="summary_checkbox_xb1_driver">Ativa um driver USB integrado para aparelhos sem suporte nativo aos controles Xbox</string>
@@ -192,7 +191,6 @@
     <string name="title_checkbox_touchscreen_trackpad">Usar o ecrã como um trackpad</string>
     <string name="summary_checkbox_touchscreen_trackpad">Se ativado, o ecrã sensível ao toque funciona como um trackpad. Se desativado, o ecrã controla diretamente o cursor do rato.</string>
     <string name="summary_checkbox_multi_controller">Desmarque esta opção para forçar o gamepad a estar sempre presente</string>
-    <string name="title_checkbox_vibrate_fallback">Emular suporte rumble com vibração</string>
     <string name="title_checkbox_vibrate_osc">Ativar vibração</string>
     <string name="summary_checkbox_vibrate_osc">Vibra o seu aparelho para emular rumble nos controles de ecrã</string>
     <string name="title_only_l3r3">Mostrar somente L3 e R3</string>
@@ -271,7 +269,7 @@
     <!-- Game menu -->
     <string name="game_menu_toggle_keyboard">Alternar teclado na tela</string>
     <string name="game_menu_toggle_performance_overlay">Alternar overlay de desempenho</string>
-    <string name="game_menu_toggle_virtual_controller">Alternar controlador virtual</string>
+    <string name="game_menu_toggle_virtual_controller">Controlador virtual</string>
     <string name="game_menu_toggle_host_keyboard">Alternar teclado do host</string>
     <string name="game_menu_toggle_all_keyboard">Alternar teclado do PC</string>
     <string name="game_menu_toggle_mouse_on">Ativar emulação de rato pelo controlador</string>
@@ -305,15 +303,9 @@
     <string name="title_native_fps_dialog">Aviso de FPS nativo</string>
     <string name="title_custom_resolutions">Resoluções personalizadas</string>
     <string name="summary_custom_resolutions">Crie suas próprias resoluções personalizadas</string>
-    <string name="custom_resolution_input_title">Inserir resolução personalizada</string>
-    <string name="width_label">Largura:</string>
-    <string name="height_label">Altura:</string>
     <string name="width_hint">ex: 1920</string>
     <string name="height_hint">ex: 1080</string>
-    <string name="add_resolution">Adicionar resolução</string>
-    <string name="invalid_resolution_format">Formato de resolução inválido, use o formato largura x altura</string>
     <string name="resolution_already_exists">Esta resolução já existe</string>
-    <string name="resolution_added_successfully">Resolução adicionada com sucesso</string>
     <string name="fps_144">144 FPS</string>
     <string name="fps_165">165 FPS</string>
     
@@ -322,8 +314,13 @@
     <string name="summary_checkbox_enable_spatializer">Ativa experiência de áudio 3D imersiva usando o espacializador do Android. Requer Android 13+ e dispositivo de saída de áudio compatível.</string>
     <string name="title_checkbox_control_only">Modo somente controle</string>
     <string name="summary_checkbox_control_only">Estabelecer apenas conexão de controle sem streams de vídeo e áudio. Útil para controle de entrada remoto apenas.</string>
-    <string name="title_checkbox_enable_mic">Ativar redirecionamento de microfone</string>
-    <string name="summary_checkbox_enable_mic">Redirecionar o microfone do dispositivo para o computador host para chat de voz e comunicação.</string>
+    <string name="title_checkbox_enable_mic">Ativar microfone</string>
+    <string name="summary_checkbox_enable_mic">Enviar o áudio do microfone deste dispositivo para o host. Requer o Foundation Sunshine 2025.0720 ou posterior.</string>
+    <string name="title_list_mic_initial_state">Estado inicial do microfone</string>
+    <string name="summary_list_mic_initial_state">Escolha o estado do microfone ao iniciar cada transmissão.</string>
+    <string name="mic_initial_state_off">Desligado</string>
+    <string name="mic_initial_state_on">Ligado</string>
+    <string name="mic_initial_state_follow_last">Seguir o último estado</string>
     <string name="title_seekbar_mic_bitrate">Taxa de bits do microfone</string>
     <string name="summary_seekbar_mic_bitrate">Ajustar a qualidade de áudio do redirecionamento de microfone.</string>
     <string name="suffix_seekbar_mic_bitrate_kbps">kbps</string>
@@ -390,13 +387,21 @@
     <string name="summary_checkbox_resume_stream">Retomar automaticamente o stream ao retornar ao Moonlight do segundo plano</string>
     
     <!-- Host settings -->
-    <string name="title_screen_combination_mode">Modo de combinação de tela (Sunshine Foundation)</string>
-    <string name="summary_screen_combination_mode">Controle como o Sunshine gerencia seus monitores ao iniciar um stream</string>
-    <string name="screen_mode_host_default">Usar configuração do host Sunshine (padrão)</string>
-    <string name="screen_mode_no_operation">Não alterar configuração do monitor</string>
-    <string name="screen_mode_ensure_active">Garantir que a tela de streaming esteja ativa</string>
-    <string name="screen_mode_ensure_primary">Garantir que a tela de streaming seja principal</string>
-    <string name="screen_mode_ensure_only_display">Usar apenas a tela de streaming (desligar outros displays)</string>
+    <string name="title_screen_combination_mode">Definições de combinação de ecrãs</string>
+    <string name="summary_screen_combination_mode">Controlo de ecrãs do Foundation Sunshine</string>
+    <string name="screen_combination_mode_dialog_subtitle">Aplica-se ao controlo de ecrãs do Foundation Sunshine</string>
+    <string name="screen_mode_host_default">Seguir anfitrião</string>
+    <string name="screen_mode_no_operation">Modo sem operação</string>
+    <string name="screen_mode_auto_activate">Modo de ativação</string>
+    <string name="screen_mode_primary_streaming">Modo de streaming no ecrã principal</string>
+    <string name="screen_mode_secondary_streaming">Modo de streaming no ecrã secundário</string>
+    <string name="screen_mode_exclusive_streaming">Modo de streaming em ecrã exclusivo</string>
+    <string name="screen_mode_host_default_desc">Usa a definição do anfitrião Sunshine sem a substituir.</string>
+    <string name="screen_mode_no_operation_desc">Mantém a disposição atual dos ecrãs.</string>
+    <string name="screen_mode_auto_activate_desc">Ativa o ecrã selecionado para streaming.</string>
+    <string name="screen_mode_primary_streaming_desc">Ativa o ecrã selecionado e define-o como principal.</string>
+    <string name="screen_mode_secondary_streaming_desc">Mantém o ecrã físico como principal e usa o ecrã Foundation como secundário.</string>
+    <string name="screen_mode_exclusive_streaming_desc">Usa apenas o ecrã selecionado e desativa os outros ecrãs.</string>
     
     <!-- Advanced settings -->
     <string name="title_enable_hdr_high_brightness">Ativar HDR com alto brilho</string>
@@ -424,7 +429,6 @@
     <string name="about_dialog_project_info">Baseado no projeto de código aberto Moonlight-Android, criado pela comunidade Foundation</string>
     <string name="about_dialog_thanks">Obrigado por escolher o Moonlight V+! Se você achar útil, por favor dê-nos uma estrela no GitHub ⭐</string>
     <string name="about_dialog_github">GitHub</string>
-    <string name="about_dialog_star">Dar estrela ao projeto</string>
     <string name="about_dialog_qq">Entrar no grupo QQ</string>
     <string name="about_dialog_close">Fechar</string>
     <string name="check_for_updates">Verificar atualizações</string>
@@ -457,7 +461,7 @@
     <!-- Crown features -->
     <string name="category_crown_features">Área de recursos Crown</string>
     <string name="title_crown_super_features">Super recursos Crown</string>
-    <string name="summary_crown_super_features">Botões personalizados e configurações durante streaming, salvos em configurações personalizadas para troca rápida</string>
+    <string name="summary_crown_super_features">Uma solução de botões virtuais na tela. Alterne os botões na tela, as ações rápidas, o modo de toque e as configurações de vibração como perfis nomeados.</string>
     <string name="title_export_super_config">Exportar configuração</string>
     <string name="summary_export_super_config">Exportar arquivo de configuração de botões personalizados e configurações de streaming</string>
     <string name="title_import_super_config">Importar configuração</string>
@@ -476,8 +480,8 @@
     <string name="toast_elements_hidden">Botão virtual oculto</string>
     <string name="toast_back_key_menu_switch_1">A configuração da função crown foi encerrada</string>
     <string name="toast_back_key_menu_switch_2">Entrou na configuração da função crown</string>
-    <string name="game_menu_edit_mode">Modo de edição do botão Crown</string>
-    <string name="game_menu_configure_settings">Modo de configuração do botão Crown</string>
+    <string name="game_menu_edit_mode">Editar disposição dos botões</string>
+    <string name="game_menu_configure_settings">Alternar configuração</string>
     
     <!-- External display -->
     <string name="title_use_external_display">Usar display externo</string>
@@ -530,24 +534,45 @@
     <string name="tip_cards_show">💡 Dica: Você pode editar os cartões de função exibidos no menu do jogo. Cartões desnecessários podem ser ocultados~</string>
     
     <!-- Touch mode switch menu -->
-    <string name="game_menu_switch_touch_mode">Trocar modo de toque</string>
-    <string name="game_menu_touch_mode_enhanced">Toque multiponto aprimorado</string>
-    <string name="game_menu_touch_mode_classic">Modo de rato clássico</string>
-    <string name="game_menu_touch_mode_trackpad">Modo trackpad</string>
-    <string name="game_menu_local_cursor_rendering">Renderização de cursor local</string>
-    <string name="game_menu_touch_mode_native_mouse">Ponteiro de rato nativo</string>
+    <string name="game_menu_switch_touch_mode">Método de controle</string>
+    <string name="game_menu_control">Controle</string>
+    <string name="game_menu_touch_mode_enhanced">Toque direto</string>
+    <string name="game_menu_touch_mode_classic">Rato com um dedo</string>
+    <string name="game_menu_touch_mode_trackpad">Touchpad</string>
+    <string name="game_menu_touch_mode_enhanced_short">Toque</string>
+    <string name="game_menu_touch_mode_classic_short">Rato</string>
+    <string name="game_menu_touch_mode_trackpad_short">Pad</string>
+    <string name="game_menu_touch_mode_native_mouse_short">Ext.</string>
+    <string name="game_menu_touch_mode_ds5_short">DS5</string>
+    <string name="game_menu_local_cursor_rendering">Cursor local de baixa latência</string>
+    <string name="game_menu_touch_mode_native_mouse">Rato externo</string>
+    <string name="game_menu_touch_mode_enhanced_summary">Toque diretamente no ecrã do anfitrião; suporta multitoque</string>
+    <string name="game_menu_touch_mode_classic_summary">A posição tocada controla diretamente o rato</string>
+    <string name="game_menu_touch_mode_trackpad_summary">Deslize como num touchpad; usa o cursor compatível do anfitrião por predefinição</string>
+    <string name="title_local_cursor_rendering">Cursor local de baixa latência</string>
+    <string name="summary_local_cursor_rendering">Segue apenas este touchpad; desative-o ao usar o rato do anfitrião ou o Steam Input, ou ao jogar jogos FPS.</string>
+    <string name="game_menu_touch_mode_native_mouse_summary">Para ratos Bluetooth, USB e touchpads de teclado</string>
+    <string name="game_menu_current_selection">Atual: %1$s</string>
+    <string name="game_menu_trackpad_double_click_drag">Toque duas vezes e mantenha para arrastar</string>
+    <string name="game_menu_trackpad_tap_behavior">Toque com um dedo</string>
+    <string name="game_menu_option_enabled">Ativado</string>
+    <string name="game_menu_option_disabled">Desativado</string>
+    <string name="game_menu_toggle_remote_mouse_summary">Mostrar ou ocultar o rato remoto do anfitrião</string>
+    <string name="toast_local_cursor_fallback">A usar um modo de cursor compatível para este anfitrião</string>
+    <string name="toast_local_cursor_enabled">Cursor local de baixa latência ativado</string>
+    <string name="toast_local_cursor_disabled">Cursor local de baixa latência desativado</string>
     <string name="toast_touch_mode_enhanced_on">Toque multiponto aprimorado ativado</string>
     <string name="toast_touch_mode_classic_on">Modo de rato clássico ativado</string>
     <string name="toast_touch_mode_trackpad_on">Modo trackpad ativado</string>
     <string name="toast_touch_mode_native_mouse_on">Ponteiro de rato nativo ativado</string>
     
     <!-- Mouse mode preset -->
-    <string name="title_list_native_mouse_mode_preset">Predefinição de modo de rato</string>
-    <string name="summary_list_native_mouse_mode_preset">Selecione uma configuração predefinida de modo de rato/toque</string>
-    <string name="native_mouse_mode_preset_enhanced">Toque multiponto aprimorado</string>
-    <string name="native_mouse_mode_preset_classic">Modo de rato clássico</string>
-    <string name="native_mouse_mode_preset_trackpad">Modo trackpad</string>
-    <string name="native_mouse_mode_preset_native">Ponteiro de rato nativo</string>
+    <string name="title_list_native_mouse_mode_preset">Predefinição do método de controle</string>
+    <string name="summary_list_native_mouse_mode_preset">Escolha como pretende controlar o anfitrião</string>
+    <string name="native_mouse_mode_preset_enhanced">Toque direto</string>
+    <string name="native_mouse_mode_preset_classic">Rato com um dedo</string>
+    <string name="native_mouse_mode_preset_trackpad">Touchpad</string>
+    <string name="native_mouse_mode_preset_native">Rato externo</string>
     <string name="toast_preset_applied">Predefinição aplicada: %s</string>
     
     <!-- Custom special keys -->
@@ -678,7 +703,7 @@
     <string name="host_resolution_changed">Resolução do host alterada para %1$dx%2$d</string>
     
     <!-- PC view menu -->
-    <string name="pcview_menu_secondary_screen">Stream de tela secundária (compatível com Foundation Sunshine)</string>
+    <string name="pcview_menu_secondary_screen">Configurações de combinação de telas</string>
     <string name="pcview_menu_eol">Fim de serviço do NVIDIA GameStream</string>
     <string name="pcview_menu_sleep_success">Suspensão do host bem-sucedida</string>
     <string name="pcview_menu_sleep_fail">Falha na suspensão do host</string>
@@ -686,5 +711,22 @@
     
     <!-- Drawer Menu -->
     <string name="menu">Menu</string>
-    <string name="title_settings">Configurações</string>
+    <string name="title_config_sync_backup_password">Palavra-passe de encriptação da cópia de segurança</string>
+    <string name="title_document_handbook">Documentação</string>
+    <string name="summary_document_handbook">Ver documentação relacionada</string>
+    <string name="title_about_us">Sobre nós</string>
+    <string name="title_checkbox_mic_volume_processing">Processamento do volume do microfone</string>
+    <string name="summary_checkbox_mic_volume_processing">Ajuste o volume do microfone antes de ser enviado para o anfitrião. O ganho fixo e o equilíbrio de volume são mutuamente exclusivos.</string>
+    <string name="title_checkbox_mic_gain">Ganho de volume</string>
+    <string name="summary_checkbox_mic_gain">Ajuste o volume do microfone por um valor fixo. Os valores positivos amplificam-no e os valores negativos atenuam-no.</string>
+    <string name="title_seekbar_mic_gain">Ganho</string>
+    <string name="summary_seekbar_mic_gain">Defina o ganho fixo. 0 dB mantém o volume original e encontra-se no centro do controlo deslizante.</string>
+    <string name="suffix_seekbar_mic_gain_db">dB</string>
+    <string name="title_checkbox_mic_balance">Equilíbrio de volume</string>
+    <string name="summary_checkbox_mic_balance">Comprime entradas fortes para reduzir as variações de volume e o risco de saturação.</string>
+    <string name="title_seekbar_mic_balance">Compensação de saída</string>
+    <string name="summary_seekbar_mic_balance" formatted="false">Defina o ganho de compensação após o equilíbrio de volume. 50% corresponde a +4 dB e é o valor recomendado.</string>
+    <string name="suffix_seekbar_mic_balance_target" formatted="false">%</string>
+    <string name="title_checkbox_mic_voice_enhancement">Melhoria de voz</string>
+    <string name="summary_checkbox_mic_voice_enhancement">Reduz o ruído de baixa frequência e melhora a clareza da voz. Disponível com ganho fixo e equilíbrio de volume.</string>
 </resources>

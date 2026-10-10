@@ -5,18 +5,21 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.GameManager
 import android.app.GameState
-import android.app.LocaleManager
 import android.app.UiModeManager
+import android.app.LocaleManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.util.TypedValue
 import android.os.BatteryManager
 import android.os.Build
 import android.os.LocaleList
 import android.view.View
 import android.view.WindowManager
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import com.limelight.LimeLog
 import com.limelight.R
 import com.limelight.nvstream.http.ComputerDetails
@@ -28,8 +31,43 @@ object UiHelper {
 
     private const val TV_VERTICAL_PADDING_DP = 15
     private const val TV_HORIZONTAL_PADDING_DP = 15
-
     private var sGameManagerAvailable: Boolean? = null
+
+    /**
+     * 解析强调色主题属性（?attr/appAccent*）。
+     * 代码里原本直接读 @color/ui_shell_accent 系静态色的位置改用这里，
+     * 使其在选择跟随壁纸后使用首页背景取色。解析失败回退到品牌粉静态色。
+     */
+    private fun resolveThemeColor(context: Context, attr: Int, fallback: Int): Int {
+        val tv = TypedValue()
+        if (context.theme.resolveAttribute(attr, tv, true)) {
+            return when (tv.type) {
+                TypedValue.TYPE_REFERENCE ->
+                    // @color 引用也需带着 theme 解析，以支持主题化 ColorStateList。
+                    ContextCompat.getColor(context, tv.resourceId)
+                TypedValue.TYPE_ATTRIBUTE -> {
+                    // 属性套属性的情况极少出现；递归解析一层
+                    val inner = TypedValue()
+                    if (context.theme.resolveAttribute(tv.data, inner, true)) {
+                        inner.data
+                    } else {
+                        ContextCompat.getColor(context, fallback)
+                    }
+                }
+                else -> tv.data
+            }
+        }
+        return ContextCompat.getColor(context, fallback)
+    }
+
+    fun accentColor(context: Context): Int =
+        resolveThemeColor(context, R.attr.appAccent, R.color.ui_shell_accent)
+
+    fun accentSoftColor(context: Context): Int =
+        resolveThemeColor(context, R.attr.appAccentSoft, R.color.ui_shell_accent_soft)
+
+    fun accentFocusColor(context: Context): Int =
+        resolveThemeColor(context, R.attr.appAccentFocus, R.color.ui_shell_accent_focus)
 
     @RequiresApi(Build.VERSION_CODES.S)
     private fun isGameManagerAvailable(context: Context): Boolean {
@@ -198,6 +236,22 @@ object UiHelper {
             .setPositiveButton(parent.resources.getString(R.string.yes)) { _, _ -> onYes?.run() }
             .setNegativeButton(parent.resources.getString(R.string.no)) { _, _ -> onNo?.run() }
             .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
+    }
+
+    fun displaySleepConfirmationDialog(
+        parent: Activity,
+        computer: ComputerDetails,
+        onYes: Runnable?,
+        onNo: Runnable?
+    ) {
+        AlertDialog.Builder(parent, R.style.AppDialogStyle)
+            .setTitle(computer.name)
+            .setMessage(parent.getString(R.string.pcview_sleep_confirmation, computer.name))
+            .setPositiveButton(parent.getString(R.string.quick_btn_sleep)) { _, _ -> onYes?.run() }
+            .setNegativeButton(parent.getString(R.string.no)) { _, _ -> onNo?.run() }
+            .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
     }
 
     fun displayDeletePcConfirmationDialog(
@@ -210,22 +264,79 @@ object UiHelper {
             .setPositiveButton(parent.resources.getString(R.string.yes)) { _, _ -> onYes?.run() }
             .setNegativeButton(parent.resources.getString(R.string.no)) { _, _ -> onNo?.run() }
             .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
+    }
+
+    fun isTvDevice(context: Context): Boolean {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+        val packageManager = context.packageManager
+        return uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+                packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
+                packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+                packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK_ONLY)
+    }
+
+    fun hasDisplayableBattery(context: Context): Boolean {
+        if (isTvDevice(context)) {
+            return false
+        }
+
+        val batteryStatus = getBatteryStatusIntent(context) ?: return false
+        if (!batteryStatus.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true)) {
+            return false
+        }
+
+        return getBatteryLevelFromIntent(batteryStatus) != null
     }
 
     fun getBatteryLevel(context: Context): Int {
-        try {
+        val propertyLevel = getBatteryCapacityProperty(context)
+        if (propertyLevel != null && propertyLevel > 0) {
+            return propertyLevel
+        }
+
+        getBatteryStatusIntent(context)?.let { batteryStatus ->
+            getBatteryLevelFromIntent(batteryStatus)?.let { return it }
+        }
+
+        return propertyLevel ?: 0
+    }
+
+    private fun getBatteryCapacityProperty(context: Context): Int? {
+        return try {
             val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
             val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 
             if (level !in 0..100) {
                 LimeLog.warning("Invalid battery level: $level")
-                return 0
+                null
+            } else {
+                level
             }
-            return level
         } catch (e: Exception) {
             LimeLog.warning("Error getting battery level: ${e.message}")
-            return 0
+            null
         }
+    }
+
+    private fun getBatteryStatusIntent(context: Context): Intent? {
+        return try {
+            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        } catch (e: Exception) {
+            LimeLog.warning("Error reading battery status: ${e.message}")
+            null
+        }
+    }
+
+    private fun getBatteryLevelFromIntent(batteryStatus: Intent): Int? {
+        val level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) {
+            return null
+        }
+
+        val batteryLevel = (level * 100f / scale).toInt().coerceIn(0, 100)
+        return batteryLevel
     }
 
     fun isCharging(context: Context): Boolean {

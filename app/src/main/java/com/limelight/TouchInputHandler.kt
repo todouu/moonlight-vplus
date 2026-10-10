@@ -3,14 +3,22 @@ package com.limelight
 
 import android.graphics.Point
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import com.limelight.binding.input.touch.AbsoluteTouchContext
+import com.limelight.binding.input.touch.EnhancedTouchGestureRouteOwner
 import com.limelight.binding.input.touch.NativeTouchContext
 import com.limelight.binding.input.touch.RelativeTouchContext
 import com.limelight.binding.input.touch.TouchContext
+import com.limelight.binding.input.touchpad.NonRootTouchpadHandler
+import com.limelight.binding.input.touchpad.ScreenDs5PressureClickDetector
+import com.limelight.binding.input.touchpad.ScreenDs5TapClickDetector
 import com.limelight.binding.input.virtual_controller.VirtualController
 import com.limelight.nvstream.NvConnection
 import com.limelight.nvstream.input.MouseButtonPacket
@@ -18,6 +26,34 @@ import com.limelight.nvstream.jni.MoonBridge
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.ui.StreamView
 import kotlin.math.*
+
+internal inline fun containsStylusTool(pointerCount: Int, toolTypeAt: (Int) -> Int): Boolean {
+    for (i in 0 until pointerCount) {
+        when (toolTypeAt(i)) {
+            MotionEvent.TOOL_TYPE_STYLUS,
+            MotionEvent.TOOL_TYPE_ERASER -> return true
+        }
+    }
+    return false
+}
+
+internal const val CURRENT_MOTION_SAMPLE = -1
+
+internal inline fun visitMotionEventSamples(
+    historySize: Int,
+    pointerCount: Int,
+    visitor: (pointerIndex: Int, historyPosition: Int) -> Boolean
+): Boolean {
+    for (historyPosition in 0 until historySize) {
+        for (pointerIndex in 0 until pointerCount) {
+            if (!visitor(pointerIndex, historyPosition)) return false
+        }
+    }
+    for (pointerIndex in 0 until pointerCount) {
+        if (!visitor(pointerIndex, CURRENT_MOTION_SAMPLE)) return false
+    }
+    return true
+}
 
 /**
  * 处理所有触控/鼠标/触控笔 MotionEvent 逻辑。
@@ -31,6 +67,7 @@ class TouchInputHandler(private val game: Game) {
     val relativeTouchContextMap = arrayOfNulls<TouchContext>(TOUCH_CONTEXT_LENGTH)
 
     // ---- 触控私有状态 ----
+    // Mouse-only baseline. Pen packets carry their full button state independently.
     private var lastButtonState = 0
     private var multiFingerDownTime = 0L
 
@@ -50,6 +87,7 @@ class TouchInputHandler(private val game: Game) {
     private var lastAbsTouchDownY = 0f
 
     val nativeTouchPointerMap = HashMap<Int, NativeTouchContext.Pointer>()
+    private val enhancedTouchRouteOwner = EnhancedTouchGestureRouteOwner()
 
     // 华为鼠标滚轮/中键模拟
     private var fakeScrollInitialY = -1f
@@ -59,6 +97,16 @@ class TouchInputHandler(private val game: Game) {
     private var detectScrolling = false
     var detectMouseMiddle = false         // 键盘处理也会读写
     var detectMouseMiddleDown = false     // 键盘处理也会读写
+    private val nonRootTouchpadHandler = NonRootTouchpadHandler()
+    private val penPointerCoords = MotionEvent.PointerCoords()
+    private val screenDs5PressureClickDetector = ScreenDs5PressureClickDetector()
+    private var screenDs5PressurePointerId = MotionEvent.INVALID_POINTER_ID
+    private val screenDs5TapClickDetector = ScreenDs5TapClickDetector(
+        movementThresholdPx = SCREEN_DS5_TAP_MOVEMENT_DP * game.resources.displayMetrics.density,
+    )
+    private var screenDs5PressureClickFired = false
+    private val screenDs5ClickHandler = Handler(Looper.getMainLooper())
+    private var screenDs5ClickReleaseCallback: Runnable? = null
 
     // ---- 公共入口 ----
 
@@ -67,6 +115,22 @@ class TouchInputHandler(private val game: Game) {
         if (!game.grabbedInput) return false
 
         val eventSource = event.source
+        val hasStylusTool = eventHasStylusTool(event)
+
+        if (view != null && hasStylusTool && trySendPenEvent(view, event)) {
+            return true
+        }
+
+        if (!BuildConfig.ROOT_BUILD && game.prefConfig.optimizeHardwareTouchpad &&
+            !hasStylusTool &&
+            NonRootTouchpadHandler.isHardwareTouchpadEvent(event)) {
+            if (game.inputCaptureProvider.isCapturingActive()) {
+                nonRootTouchpadHandler.handleMotionEvent(event, game.conn)
+            } else {
+                nonRootTouchpadHandler.cancelAll(game.conn)
+            }
+            return true
+        }
 
         // 华为平板原生鼠标下的滚动逻辑
         if (game.prefConfig.fixMouseWheel && game.cursorVisible &&
@@ -246,7 +310,8 @@ class TouchInputHandler(private val game: Game) {
                     return true
                 }
 
-                if (game.inputCaptureProvider.eventHasRelativeMouseAxes(event)) {
+                val eventHasRelativeMouseAxes = game.inputCaptureProvider.eventHasRelativeMouseAxes(event)
+                if (eventHasRelativeMouseAxes) {
                     val deltaX = game.inputCaptureProvider.getRelativeAxisX(event).toInt().toShort()
                     val deltaY = game.inputCaptureProvider.getRelativeAxisY(event).toInt().toShort()
                     if (deltaX.toInt() != 0 || deltaY.toInt() != 0) {
@@ -276,8 +341,6 @@ class TouchInputHandler(private val game: Game) {
                             }
                         }
                     }
-                } else if (view != null && trySendPenEvent(view, event)) {
-                    return true
                 } else if (view != null) {
                     updateMousePosition(view, event)
                 }
@@ -393,13 +456,38 @@ class TouchInputHandler(private val game: Game) {
                 lastButtonState = buttonState
             } else {
                 // This case is for fingers
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    enhancedTouchRouteOwner.finish()
+                    nativeTouchPointerMap.clear()
+                } else if (enhancedTouchRouteOwner.ownsContinuation()) {
+                    trySendTouchEvent(view, event)
+                    if (event.actionMasked == MotionEvent.ACTION_UP ||
+                        event.actionMasked == MotionEvent.ACTION_CANCEL
+                    ) {
+                        enhancedTouchRouteOwner.finish()
+                    }
+                    return true
+                }
+
+                if (game.prefConfig.screenDs5Touchpad && trySendScreenDs5TouchpadEvent(view, event)) {
+                    return true
+                }
+
                 if (game.getisTouchOverrideEnabled()) {
                     game.panZoomHandler.handleTouchEvent(event)
                     return true
                 }
 
-                if (!game.prefConfig.touchscreenTrackpad && game.prefConfig.enableEnhancedTouch && trySendTouchEvent(view, event)) {
-                    return true
+                if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                    !game.prefConfig.touchscreenTrackpad &&
+                    game.prefConfig.enableEnhancedTouch
+                ) {
+                    enhancedTouchRouteOwner.begin(NativeTouchContext.capturePointerConfig())
+                    if (trySendTouchEvent(view, event)) {
+                        return true
+                    }
+                    enhancedTouchRouteOwner.finish()
+                    nativeTouchPointerMap.clear()
                 }
 
                 if (game.virtualController != null &&
@@ -440,8 +528,10 @@ class TouchInputHandler(private val game: Game) {
 
                         if (multiFingerDownTime == 0L && event.pointerCount == 2 && !twoFingerMoved && game.prefConfig.touchscreenTrackpad) {
                             if (event.eventTime - twoFingerDownTime < TWO_FINGER_TAP_THRESHOLD) {
-                                game.conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT)
-                                game.conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT)
+                                if (!game.isMouseMoveOnlyEnabled) {
+                                    game.conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT)
+                                    game.conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT)
+                                }
                                 twoFingerTapPending = false
                                 twoFingerMoved = true
                                 context.cancelTouch()
@@ -459,8 +549,10 @@ class TouchInputHandler(private val game: Game) {
                         ) {
                             if (twoFingerTapPending && !twoFingerMoved && game.prefConfig.touchscreenTrackpad) {
                                 if (event.eventTime - firstFingerUpTime < TWO_FINGER_TAP_THRESHOLD) {
-                                    game.conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT)
-                                    game.conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT)
+                                    if (!game.isMouseMoveOnlyEnabled) {
+                                        game.conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT)
+                                        game.conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT)
+                                    }
                                     twoFingerTapPending = false
                                     for (tc in touchContextMap) {
                                         tc?.cancelTouch()
@@ -526,6 +618,120 @@ class TouchInputHandler(private val game: Game) {
             return true
         }
         return false
+    }
+
+    private fun handleTouchInput(
+        event: MotionEvent,
+        inputContextMap: Array<TouchContext?>,
+        isTouchScreen: Boolean,
+        invertAxis: Boolean = false,
+        eventAction: Int = event.actionMasked,
+        actionIndex: Int = event.actionIndex,
+        pointerCount: Int = event.pointerCount
+    ): Boolean {
+        val context = if (actionIndex < inputContextMap.size) inputContextMap[actionIndex] else null
+        if (context == null) {
+            return false
+        }
+
+        val actualPointerCount = event.pointerCount
+        val shouldDuplicateMovement = actualPointerCount < pointerCount
+
+        if (eventAction == MotionEvent.ACTION_MOVE) {
+            for (i in 0 until event.historySize) {
+                for (touchContext in inputContextMap) {
+                    if (touchContext != null && touchContext.getActionIndex() < pointerCount) {
+                        val actualActionIndex = if (shouldDuplicateMovement) 0 else touchContext.getActionIndex()
+                        if (actualActionIndex >= actualPointerCount) continue
+
+                        var historicalX = event.getHistoricalX(actualActionIndex, i).toInt()
+                        var historicalY = event.getHistoricalY(actualActionIndex, i).toInt()
+                        if (isTouchScreen) {
+                            val normalizedCoords = getNormalizedCoordinates(game.streamView, historicalX.toFloat(), historicalY.toFloat())
+                            historicalX = normalizedCoords[0].toInt()
+                            historicalY = normalizedCoords[1].toInt()
+                        }
+
+                        if (invertAxis) {
+                            touchContext.touchMoveEvent(historicalY, historicalX, event.getHistoricalEventTime(i))
+                        } else {
+                            touchContext.touchMoveEvent(historicalX, historicalY, event.getHistoricalEventTime(i))
+                        }
+                    }
+                }
+            }
+
+            for (touchContext in inputContextMap) {
+                if (touchContext != null && touchContext.getActionIndex() < pointerCount) {
+                    val actualActionIndex = if (shouldDuplicateMovement) 0 else touchContext.getActionIndex()
+                    if (actualActionIndex >= actualPointerCount) continue
+
+                    var currentX = event.getX(actualActionIndex).toInt()
+                    var currentY = event.getY(actualActionIndex).toInt()
+                    if (isTouchScreen) {
+                        val normalizedCoords = getNormalizedCoordinates(game.streamView, currentX.toFloat(), currentY.toFloat())
+                        currentX = normalizedCoords[0].toInt()
+                        currentY = normalizedCoords[1].toInt()
+                    }
+
+                    if (invertAxis) {
+                        touchContext.touchMoveEvent(currentY, currentX, event.eventTime)
+                    } else {
+                        touchContext.touchMoveEvent(currentX, currentY, event.eventTime)
+                    }
+                }
+            }
+
+            return true
+        }
+
+        val actualActionIndex = event.actionIndex.coerceAtMost((actualPointerCount - 1).coerceAtLeast(0))
+        var eventX = event.getX(actualActionIndex).toInt()
+        var eventY = event.getY(actualActionIndex).toInt()
+
+        if (isTouchScreen) {
+            val normalizedCoords = getNormalizedCoordinates(game.streamView, eventX.toFloat(), eventY.toFloat())
+            eventX = normalizedCoords[0].toInt()
+            eventY = normalizedCoords[1].toInt()
+        }
+
+        when (eventAction) {
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_DOWN -> {
+                for (touchContext in inputContextMap) touchContext?.setPointerCount(pointerCount)
+                context.touchDownEvent(eventX, eventY, event.eventTime, true)
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    (event.flags and MotionEvent.FLAG_CANCELED) != 0
+                ) {
+                    context.cancelTouch()
+                } else {
+                    context.touchUpEvent(eventX, eventY, event.eventTime)
+                }
+
+                for (touchContext in inputContextMap) touchContext?.setPointerCount(pointerCount - 1)
+                if (actionIndex == 0 && pointerCount > 1 && !context.isCancelled()) {
+                    val secondaryIndex = if (actualPointerCount > 1) 1 else 0
+                    var secondX = event.getX(secondaryIndex).toInt()
+                    var secondY = event.getY(secondaryIndex).toInt()
+                    if (isTouchScreen) {
+                        val normalizedCoords = getNormalizedCoordinates(game.streamView, secondX.toFloat(), secondY.toFloat())
+                        secondX = normalizedCoords[0].toInt()
+                        secondY = normalizedCoords[1].toInt()
+                    }
+                    context.touchDownEvent(secondX, secondY, event.eventTime, false)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                for (touchContext in inputContextMap) {
+                    touchContext?.cancelTouch()
+                    touchContext?.setPointerCount(0)
+                }
+            }
+            else -> return false
+        }
+
+        return true
     }
 
     // ---- updateMousePosition ----
@@ -599,9 +805,13 @@ class TouchInputHandler(private val game: Game) {
     }
 
     private fun getStreamViewRelativeNormalizedXY(view: View?, event: MotionEvent, pointerIndex: Int): FloatArray {
-        val activeStreamView = game.activeStreamView ?: return floatArrayOf(0f, 0f)
         val rawX = event.getX(pointerIndex)
         val rawY = event.getY(pointerIndex)
+        return getStreamViewRelativeNormalizedXY(view, rawX, rawY)
+    }
+
+    private fun getStreamViewRelativeNormalizedXY(view: View?, rawX: Float, rawY: Float): FloatArray {
+        val activeStreamView = game.activeStreamView ?: return floatArrayOf(0f, 0f)
 
         if (game.externalDisplayManager != null && game.externalDisplayManager?.isUsingExternalDisplay() == true) {
             val touchWidth: Float
@@ -663,6 +873,24 @@ class TouchInputHandler(private val game: Game) {
             }
         }
 
+        return getStreamViewNormalizedContactArea(contactAreaMajor, contactAreaMinor, orientation)
+    }
+
+    private fun getStreamViewNormalizedContactArea(event: MotionEvent, pointerCoords: MotionEvent.PointerCoords): FloatArray {
+        val orientation = if (event.device == null || event.device.getMotionRange(MotionEvent.AXIS_ORIENTATION, event.source) == null) {
+            (Math.PI / 4).toFloat()
+        } else {
+            pointerCoords.orientation
+        }
+        val isHover = event.actionMasked == MotionEvent.ACTION_HOVER_ENTER ||
+            event.actionMasked == MotionEvent.ACTION_HOVER_MOVE ||
+            event.actionMasked == MotionEvent.ACTION_HOVER_EXIT
+        val contactAreaMajor = if (isHover) pointerCoords.toolMajor else pointerCoords.touchMajor
+        val contactAreaMinor = if (isHover) pointerCoords.toolMinor else pointerCoords.touchMinor
+        return getStreamViewNormalizedContactArea(contactAreaMajor, contactAreaMinor, orientation)
+    }
+
+    private fun getStreamViewNormalizedContactArea(contactAreaMajor: Float, contactAreaMinor: Float, orientation: Float): FloatArray {
         val majorCart = polarToCartesian(contactAreaMajor, orientation)
         val minorCart = polarToCartesian(contactAreaMinor, (orientation + (Math.PI / 2).toFloat()))
 
@@ -678,7 +906,44 @@ class TouchInputHandler(private val game: Game) {
         return floatArrayOf(cartesianToR(majorCart), cartesianToR(minorCart))
     }
 
-    private fun sendPenEventForPointer(view: View, event: MotionEvent, eventType: Byte, toolType: Byte, pointerIndex: Int): Boolean {
+    private fun getPressureOrDistance(event: MotionEvent, pointerCoords: MotionEvent.PointerCoords): Float {
+        return when (event.actionMasked) {
+            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT -> {
+                val distanceRange = event.device?.getMotionRange(MotionEvent.AXIS_DISTANCE, event.source)
+                if (distanceRange != null) {
+                    normalizeValueInRange(pointerCoords.getAxisValue(MotionEvent.AXIS_DISTANCE), distanceRange)
+                } else {
+                    0f
+                }
+            }
+            else -> pointerCoords.pressure
+        }
+    }
+
+    private fun getRotationDegrees(event: MotionEvent, pointerCoords: MotionEvent.PointerCoords): Short {
+        if (event.device?.getMotionRange(MotionEvent.AXIS_ORIENTATION, event.source) != null) {
+            var rotationDegrees = Math.toDegrees(pointerCoords.orientation.toDouble()).toInt().toShort()
+            if (rotationDegrees < 0) rotationDegrees = (rotationDegrees + 360).toShort()
+            return rotationDegrees
+        }
+        return MoonBridge.LI_ROT_UNKNOWN
+    }
+
+    private fun sendPenEventForPointer(
+        view: View,
+        event: MotionEvent,
+        eventType: Byte,
+        toolType: Byte,
+        pointerIndex: Int,
+        historyPosition: Int = CURRENT_MOTION_SAMPLE
+    ): Boolean {
+        val pointerCoords = penPointerCoords
+        if (historyPosition == CURRENT_MOTION_SAMPLE) {
+            event.getPointerCoords(pointerIndex, pointerCoords)
+        } else {
+            event.getHistoricalPointerCoords(pointerIndex, historyPosition, pointerCoords)
+        }
+
         var penButtons: Byte = 0
         if (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) {
             penButtons = (penButtons.toInt() or MoonBridge.LI_PEN_BUTTON_PRIMARY.toInt()).toByte()
@@ -690,17 +955,17 @@ class TouchInputHandler(private val game: Game) {
         var tiltDegrees = MoonBridge.LI_TILT_UNKNOWN
         val dev = event.device
         if (dev?.getMotionRange(MotionEvent.AXIS_TILT, event.source) != null) {
-            tiltDegrees = Math.toDegrees(event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex).toDouble()).toInt().toByte()
+            tiltDegrees = Math.toDegrees(pointerCoords.getAxisValue(MotionEvent.AXIS_TILT).toDouble()).toInt().toByte()
         }
 
-        val normalizedCoords = getStreamViewRelativeNormalizedXY(view, event, pointerIndex)
-        val normalizedContactArea = getStreamViewNormalizedContactArea(event, pointerIndex)
+        val normalizedCoords = getStreamViewRelativeNormalizedXY(view, pointerCoords.x, pointerCoords.y)
+        val normalizedContactArea = getStreamViewNormalizedContactArea(event, pointerCoords)
         return game.conn?.sendPenEvent(
             eventType, toolType, penButtons,
             normalizedCoords[0], normalizedCoords[1],
-            getPressureOrDistance(event, pointerIndex),
+            getPressureOrDistance(event, pointerCoords),
             normalizedContactArea[0], normalizedContactArea[1],
-            getRotationDegrees(event, pointerIndex), tiltDegrees
+            getRotationDegrees(event, pointerCoords), tiltDegrees
         ) != MoonBridge.LI_ERR_UNSUPPORTED
     }
 
@@ -710,17 +975,19 @@ class TouchInputHandler(private val game: Game) {
 
         if (event.actionMasked == MotionEvent.ACTION_MOVE) {
             var handledStylusEvent = false
-            for (i in 0 until event.pointerCount) {
-                val toolType = convertToolTypeToStylusToolType(event, i)
-                if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) continue
-                handledStylusEvent = true
-
-                if (game.prefConfig.enableEnhancedTouch) {
-                    nativeTouchPointerMap[event.getPointerId(i)]?.updatePointerCoords(event, i)
+            val sentAllSamples = visitMotionEventSamples(event.historySize, event.pointerCount) { pointerIndex, historyPosition ->
+                val toolType = convertToolTypeToStylusToolType(event, pointerIndex)
+                if (toolType == MoonBridge.LI_TOOL_TYPE_UNKNOWN) {
+                    true
+                } else {
+                    handledStylusEvent = true
+                    if (historyPosition == CURRENT_MOTION_SAMPLE && game.prefConfig.enableEnhancedTouch) {
+                        nativeTouchPointerMap[event.getPointerId(pointerIndex)]?.updatePointerCoords(event, pointerIndex)
+                    }
+                    sendPenEventForPointer(view, event, eventType, toolType, pointerIndex, historyPosition)
                 }
-                if (!sendPenEventForPointer(view, event, eventType, toolType, i)) return false
             }
-            return handledStylusEvent
+            return sentAllSamples && handledStylusEvent
         } else if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
             return game.conn?.sendPenEvent(
                 MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, MoonBridge.LI_TOOL_TYPE_UNKNOWN, 0,
@@ -751,15 +1018,16 @@ class TouchInputHandler(private val game: Game) {
     }
 
     private fun sendTouchEventForPointer(view: View?, event: MotionEvent, eventType: Byte, pointerIndex: Int): Boolean {
-        val normalizedCoords = getStreamViewRelativeNormalizedXY(view, event, pointerIndex)
+        val normalizedCoords = getEnhancedPointerNormalizedXY(view, event, pointerIndex)
         val normalizedContactArea = getStreamViewNormalizedContactArea(event, pointerIndex)
-        return game.conn?.sendTouchEvent(
+        val result = game.conn?.sendTouchEvent(
             eventType, event.getPointerId(pointerIndex),
             normalizedCoords[0], normalizedCoords[1],
             getPressureOrDistance(event, pointerIndex),
             normalizedContactArea[0], normalizedContactArea[1],
             getRotationDegrees(event, pointerIndex)
-        ) != MoonBridge.LI_ERR_UNSUPPORTED
+        )
+        return result != null && result != MoonBridge.LI_ERR_UNSUPPORTED
     }
 
     private fun trySendTouchEvent(view: View?, event: MotionEvent): Boolean {
@@ -769,34 +1037,36 @@ class TouchInputHandler(private val game: Game) {
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> {
                 for (i in 0 until event.pointerCount) {
-                    if (game.prefConfig.enableEnhancedTouch) {
-                        nativeTouchPointerMap[event.getPointerId(i)]?.updatePointerCoords(event, i)
-                    }
+                    nativeTouchPointerMap[event.getPointerId(i)]?.updatePointerCoords(event, i)
                     if (!sendTouchEventForPointer(view, event, eventType, i)) return false
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                return game.conn?.sendTouchEvent(
+                val sendResult = game.conn?.sendTouchEvent(
                     MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
                     0f, 0f, 0f, 0f, 0f,
                     MoonBridge.LI_ROT_UNKNOWN
-                ) != MoonBridge.LI_ERR_UNSUPPORTED
+                )
+                val result = sendResult != null && sendResult != MoonBridge.LI_ERR_UNSUPPORTED
+                nativeTouchPointerMap.clear()
+                return result
             }
             else -> {
                 val actionIndex = event.actionIndex
                 when (event.actionMasked) {
                     MotionEvent.ACTION_POINTER_DOWN -> {
                         multiFingerTapChecker(event)
-                        if (game.prefConfig.enableEnhancedTouch) {
-                            val pointer = NativeTouchContext.Pointer(event)
+                        enhancedTouchRouteOwner.currentPointerConfig()?.let { config ->
+                            val pointer = NativeTouchContext.Pointer(event, config)
                             nativeTouchPointerMap[pointer.pointerId] = pointer
                         }
                     }
 
                     MotionEvent.ACTION_DOWN -> {
-                        if (game.prefConfig.enableEnhancedTouch) {
-                            val pointer = NativeTouchContext.Pointer(event)
+                        nativeTouchPointerMap.clear()
+                        enhancedTouchRouteOwner.currentPointerConfig()?.let { config ->
+                            val pointer = NativeTouchContext.Pointer(event, config)
                             nativeTouchPointerMap[pointer.pointerId] = pointer
                         }
                     }
@@ -806,17 +1076,236 @@ class TouchInputHandler(private val game: Game) {
                             game.toggleKeyboard()
                         }
                     }
-
-                    MotionEvent.ACTION_POINTER_UP -> {
-                        if (game.prefConfig.enableEnhancedTouch) {
-                            nativeTouchPointerMap.remove(event.getPointerId(actionIndex))
-                        }
-                    }
                 }
-                return sendTouchEventForPointer(view, event, eventType, actionIndex)
+                if (event.actionMasked == MotionEvent.ACTION_POINTER_UP ||
+                    event.actionMasked == MotionEvent.ACTION_UP
+                ) {
+                    nativeTouchPointerMap[event.getPointerId(actionIndex)]
+                        ?.updatePointerCoords(event, actionIndex)
+                }
+                val result = sendTouchEventForPointer(view, event, eventType, actionIndex)
+                if (event.actionMasked == MotionEvent.ACTION_POINTER_UP ||
+                    event.actionMasked == MotionEvent.ACTION_UP
+                ) {
+                    nativeTouchPointerMap.remove(event.getPointerId(actionIndex))
+                }
+                return result
             }
         }
     }
+
+    /**
+     * Returns the enhanced coordinate for an active pointer when the enhanced
+     * touch path owns it. Down/up events use the same coordinate source as move
+     * events so a release cannot jump back to the raw touchscreen position.
+     */
+    private fun getEnhancedPointerNormalizedXY(
+        view: View?,
+        event: MotionEvent,
+        pointerIndex: Int
+    ): FloatArray {
+        val pointer = nativeTouchPointerMap[event.getPointerId(pointerIndex)]
+        if (pointer != null) {
+            return getStreamViewRelativeNormalizedXY(
+                view,
+                pointer.getSelectedX(),
+                pointer.getSelectedY()
+            )
+        }
+        return getStreamViewRelativeNormalizedXY(view, event, pointerIndex)
+    }
+
+    /** Forward touchscreen contacts through controller 0 as DualSense touchpad contacts. */
+    private fun trySendScreenDs5TouchpadEvent(view: View?, event: MotionEvent): Boolean {
+        val eventType = getLiTouchTypeFromEvent(event)
+        if (eventType < 0 || eventType == MoonBridge.LI_TOUCH_EVENT_BUTTON_ONLY) return false
+
+        fun sendPointer(pointerIndex: Int): Boolean {
+            val position = getStreamViewRelativeNormalizedXY(view, event, pointerIndex)
+            // Linux's DS5 backend currently uses pressure to distinguish contact/release.
+            val pressure = when (eventType) {
+                MoonBridge.LI_TOUCH_EVENT_DOWN, MoonBridge.LI_TOUCH_EVENT_MOVE -> 1f
+                else -> 0f
+            }
+            val result = game.conn?.sendControllerTouchEvent(
+                0, eventType, event.getPointerId(pointerIndex),
+                position[0], position[1], pressure
+            ) ?: return false
+            val supported = result == 0
+            noteScreenDs5HostSupport(result)
+            if (supported) {
+                game.ds5TouchpadFeedbackView?.updateContact(
+                    eventType,
+                    event.getPointerId(pointerIndex),
+                    position[0],
+                    position[1],
+                )
+            }
+            return supported
+        }
+
+        val supported = when (event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> (0 until event.pointerCount).all(::sendPointer)
+            MotionEvent.ACTION_CANCEL -> {
+                val result = game.conn?.sendControllerTouchEvent(
+                    0, MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0f, 0f, 0f
+                )
+                if (result != null) {
+                    noteScreenDs5HostSupport(result)
+                }
+                // Clear local feedback even if the send failed, so recorded contacts
+                // don't linger on screen.
+                game.ds5TouchpadFeedbackView?.cancelAllContacts()
+                result == 0
+            }
+            else -> sendPointer(event.actionIndex)
+        }
+        if (supported || event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL
+        ) {
+            updateScreenDs5TouchpadPress(view ?: game.streamView, event)
+        }
+        if (supported && event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // KEYBOARD_TAP/VIRTUAL_KEY map to the touch vibration channel; CLOCK_TICK and
+            // CONTEXT_CLICK map to hardware feedback, which many ROMs ship disabled.
+            (view ?: game.streamView).performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+        return supported
+    }
+
+    /** Record the first definitive host answer for controller touch and surface a one-time hint. */
+    private fun noteScreenDs5HostSupport(result: Int) {
+        if (game.screenDs5TouchpadHostSupport != Game.ScreenDs5HostSupport.UNKNOWN) return
+        when (result) {
+            0 -> game.setScreenDs5TouchpadHostSupport(true)
+            MoonBridge.LI_ERR_UNSUPPORTED -> {
+                game.setScreenDs5TouchpadHostSupport(false)
+                Toast.makeText(
+                    game,
+                    R.string.toast_ds5_touchpad_unsupported,
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun updateScreenDs5TouchpadPress(view: View, event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val pointerId = event.getPointerId(event.actionIndex)
+                screenDs5PressurePointerId = pointerId
+                screenDs5PressureClickFired = false
+                screenDs5TapClickDetector.onDown(
+                    pointerId,
+                    event.getX(event.actionIndex),
+                    event.getY(event.actionIndex),
+                    event.eventTime,
+                )
+                screenDs5PressureClickDetector.begin(
+                    event.getPressure(event.actionIndex),
+                    event.getSize(event.actionIndex),
+                    event.isDeepPress(),
+                )?.let { onFirmPressTransition(view, it) }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val pointerIndex = event.findPointerIndex(screenDs5PressurePointerId)
+                if (pointerIndex >= 0) {
+                    screenDs5TapClickDetector.onMove(
+                        screenDs5PressurePointerId,
+                        event.getX(pointerIndex),
+                        event.getY(pointerIndex),
+                    )
+                }
+                updateTrackedScreenPressure(event)?.let { onFirmPressTransition(view, it) }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                screenDs5TapClickDetector.onPointerDown()
+                updateTrackedScreenPressure(event)?.let { onFirmPressTransition(view, it) }
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (event.getPointerId(event.actionIndex) == screenDs5PressurePointerId) {
+                    screenDs5PressurePointerId = MotionEvent.INVALID_POINTER_ID
+                    screenDs5TapClickDetector.cancel()
+                    screenDs5PressureClickDetector.end()?.let { onFirmPressTransition(view, it) }
+                } else {
+                    updateTrackedScreenPressure(event)?.let { onFirmPressTransition(view, it) }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (event.flags and MotionEvent.FLAG_CANCELED != 0) {
+                    // A system-canceled final lift (palm rejection etc.) must not tap-click.
+                    screenDs5TapClickDetector.cancel()
+                    releaseScreenDs5Click()
+                    screenDs5PressurePointerId = MotionEvent.INVALID_POINTER_ID
+                    screenDs5PressureClickDetector.end()?.let { onFirmPressTransition(view, it) }
+                    return
+                }
+                screenDs5PressurePointerId = MotionEvent.INVALID_POINTER_ID
+                screenDs5PressureClickDetector.end()?.let { onFirmPressTransition(view, it) }
+                // A firm press already clicked this gesture; don't double-fire on lift.
+                val tapClicked = !screenDs5PressureClickFired && screenDs5TapClickDetector.onUp(
+                    event.getPointerId(event.actionIndex),
+                    event.getX(event.actionIndex),
+                    event.getY(event.actionIndex),
+                    event.eventTime,
+                )
+                releaseScreenDs5Click()
+                if (tapClicked) {
+                    pressScreenDs5Click(view, autoRelease = true)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                screenDs5TapClickDetector.cancel()
+                releaseScreenDs5Click()
+                screenDs5PressurePointerId = MotionEvent.INVALID_POINTER_ID
+                screenDs5PressureClickDetector.end()?.let { onFirmPressTransition(view, it) }
+            }
+        }
+    }
+
+    private fun onFirmPressTransition(view: View, pressed: Boolean) {
+        if (pressed) {
+            screenDs5PressureClickFired = true
+            pressScreenDs5Click(view, autoRelease = false)
+        } else {
+            releaseScreenDs5Click()
+        }
+    }
+
+    /** Single owner of the clickpad button state shared by tap and firm-press triggers. */
+    private fun pressScreenDs5Click(view: View, autoRelease: Boolean) {
+        releaseScreenDs5Click()
+        game.controllerHandler.setScreenDs5TouchpadPressed(true)
+        game.ds5TouchpadFeedbackView?.setTouchpadPressed(true)
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        if (autoRelease) {
+            screenDs5ClickReleaseCallback = Runnable {
+                screenDs5ClickReleaseCallback = null
+                releaseScreenDs5Click()
+            }.also { screenDs5ClickHandler.postDelayed(it, SCREEN_DS5_CLICK_RELEASE_MS) }
+        }
+    }
+
+    private fun releaseScreenDs5Click() {
+        screenDs5ClickReleaseCallback?.let { screenDs5ClickHandler.removeCallbacks(it) }
+        screenDs5ClickReleaseCallback = null
+        game.controllerHandler.setScreenDs5TouchpadPressed(false)
+        game.ds5TouchpadFeedbackView?.setTouchpadPressed(false)
+    }
+
+    private fun updateTrackedScreenPressure(event: MotionEvent): Boolean? {
+        val pointerIndex = event.findPointerIndex(screenDs5PressurePointerId)
+        if (pointerIndex < 0) return screenDs5PressureClickDetector.end()
+        return screenDs5PressureClickDetector.update(
+            event.getPressure(pointerIndex),
+            event.getSize(pointerIndex),
+            event.isDeepPress(),
+        )
+    }
+
+    private fun MotionEvent.isDeepPress(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            classification == MotionEvent.CLASSIFICATION_DEEP_PRESS
 
     private fun multiFingerTapChecker(event: MotionEvent) {
         if (event.pointerCount == game.prefConfig.nativeTouchFingersToToggleKeyboard) {
@@ -865,6 +1354,9 @@ class TouchInputHandler(private val game: Game) {
         )
     }
 
+    private fun eventHasStylusTool(event: MotionEvent): Boolean =
+        containsStylusTool(event.pointerCount) { event.getToolType(it) }
+
     fun getRelativeTouchContextMap(): Array<RelativeTouchContext?> =
         Array(relativeTouchContextMap.size) { i ->
             relativeTouchContextMap[i] as? RelativeTouchContext
@@ -876,11 +1368,11 @@ class TouchInputHandler(private val game: Game) {
                 game.prefConfig.touchscreenTrackpad = true
                 game.prefConfig.enableNativeMousePointer = false
                 touchContextMap = relativeTouchContextMap
-                game.cursorServiceManager.refreshLocalCursorState(game.prefConfig.enableLocalCursorRendering)
+                game.cursorServiceManager.refreshCursorMode()
             } else {
                 game.prefConfig.touchscreenTrackpad = false
                 touchContextMap = absoluteTouchContextMap
-                game.cursorServiceManager.refreshLocalCursorState(false)
+                game.cursorServiceManager.refreshCursorMode()
             }
         }
     }
@@ -890,6 +1382,10 @@ class TouchInputHandler(private val game: Game) {
         if (game.prefConfig.enableEnhancedTouch) {
             game.prefConfig.enableNativeMousePointer = false
         }
+    }
+
+    fun cancelNonRootTouchpad() {
+        nonRootTouchpadHandler.cancelAll(game.conn)
     }
 
     /**
@@ -907,6 +1403,10 @@ class TouchInputHandler(private val game: Game) {
         const val TOUCH_CONTEXT_LENGTH = 2
         private const val TWO_FINGER_TAP_THRESHOLD = 100L
         private const val TWO_FINGER_MOVE_THRESHOLD = 40f
+        // Matches the verified HarmonyOS DS5 touchpad behavior (24vp tap slop,
+        // 50ms clickpad hold).
+        private const val SCREEN_DS5_TAP_MOVEMENT_DP = 24f
+        private const val SCREEN_DS5_CLICK_RELEASE_MS = 50L
         private const val STYLUS_DOWN_DEAD_ZONE_DELAY = 100L
         private const val STYLUS_DOWN_DEAD_ZONE_RADIUS = 20f
         private const val STYLUS_UP_DEAD_ZONE_DELAY = 150L

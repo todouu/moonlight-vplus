@@ -11,13 +11,33 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.DecodeFormat
 import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.resource.bitmap.DownsampleStrategy
+import android.graphics.drawable.Drawable
+import com.bumptech.glide.request.FutureTarget
 import com.bumptech.glide.request.RequestOptions
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.target.Target
+import com.bumptech.glide.request.transition.Transition
+import com.bumptech.glide.signature.ObjectKey
+import com.limelight.ui.ThemedActivity
+import com.limelight.utils.AppTheme
 import com.limelight.binding.PlatformBinding
 import com.limelight.binding.crypto.AndroidCryptoProvider
 import com.limelight.computers.ComputerManagerService
+import com.limelight.computers.PairStatePreflight
+import com.limelight.networkquality.NetworkQualitySheet
+import com.limelight.networkquality.StreamDeviceDisplay
+import com.limelight.networkquality.StreamNetworkQuality
+import com.limelight.networkquality.StreamNetworkQualityStore
+import com.limelight.networkquality.StreamNetworkRecommendation
+import com.limelight.networkquality.StreamNetworkTestResult
+import com.limelight.networkquality.supportsNetworkQualityProbe
 import com.limelight.dialogs.AddressSelectionDialog
 import com.limelight.grid.PcGridAdapter
 import com.limelight.grid.assets.DiskAssetLoader
@@ -29,22 +49,35 @@ import com.limelight.nvstream.http.PairingManager.PairState
 import com.limelight.nvstream.wol.WakeOnLanSender
 import com.limelight.preferences.AddComputerManually
 import com.limelight.preferences.BackgroundSource
+import com.limelight.preferences.CustomResolutionsStore
+import com.limelight.preferences.ResolutionValidator
 import com.limelight.preferences.GlPreferences
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.preferences.StreamSettings
 import com.limelight.services.KeyboardAccessibilityService
 import com.limelight.ui.AdapterFragment
 import com.limelight.ui.AdapterFragmentCallbacks
+import com.limelight.ui.FeatureGuideRegistry
+import com.limelight.ui.UiDismissKeyHandler
+import com.limelight.ui.ViewFeatureGuide
+import com.limelight.ui.ViewFeatureGuideStep
+import com.limelight.utils.AboutDialogLauncher
 import com.limelight.utils.AnalyticsManager
+import com.limelight.utils.AppDialogStyler
+import com.limelight.utils.AppActionSheet
 import com.limelight.utils.AppCacheManager
+import com.limelight.utils.BgAccent
 import com.limelight.utils.CacheHelper
+import com.limelight.utils.HostCacheKey
+import com.limelight.utils.ConfigurationSyncScheduler
 import com.limelight.utils.Dialog
-import com.limelight.utils.EasyTierController
+import com.limelight.utils.easytier.EasyTierController
 import com.limelight.utils.HelpLauncher
 import com.limelight.utils.Iperf3Tester
 import com.limelight.utils.NetHelper
 import com.limelight.utils.ServerHelper
 import com.limelight.utils.ShortcutHelper
+import com.limelight.utils.SpinnerDialog
 import com.limelight.utils.UiHelper
 import com.limelight.utils.UpdateManager
 import com.squareup.seismic.ShakeDetector
@@ -58,6 +91,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 
 import com.google.zxing.integration.android.IntentIntegrator
@@ -67,7 +101,6 @@ import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParserException
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
@@ -77,11 +110,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.hardware.SensorManager
 import android.net.Uri
 import android.net.VpnService
@@ -93,6 +127,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.text.format.DateUtils
 import androidx.preference.PreferenceManager
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import android.animation.ObjectAnimator
@@ -100,24 +135,21 @@ import android.animation.AnimatorSet
 import androidx.core.animation.doOnEnd
 import android.view.animation.DecelerateInterpolator
 import android.provider.Settings
-import android.util.LruCache
-import android.view.ContextMenu
-import android.view.ContextMenu.ContextMenuInfo
 import android.view.GestureDetector
-import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuItem
+import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.view.animation.LayoutAnimationController
 import android.widget.AbsListView
 import android.widget.AdapterView
-import android.widget.AdapterView.AdapterContextMenuInfo
 import android.widget.GridView
 import android.widget.ImageButton
 import android.widget.ImageView
-import android.widget.RelativeLayout
+import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.Space
 import android.widget.TextView
 import android.widget.Toast
@@ -128,21 +160,40 @@ import javax.microedition.khronos.opengles.GL10
 
 import jp.wasabeef.glide.transformations.BlurTransformation
 import jp.wasabeef.glide.transformations.ColorFilterTransformation
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
-class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, EasyTierController.VpnPermissionCallback {
+internal class PcViewExitGate(private val timeoutMillis: Long = 2_000L) {
+    private var armedUntil = 0L
+
+    fun requestExit(nowMillis: Long): Boolean {
+        if (armedUntil != 0L && nowMillis <= armedUntil) {
+            armedUntil = 0L
+            return true
+        }
+        armedUntil = nowMillis + timeoutMillis
+        return false
+    }
+
+    fun cancel() {
+        armedUntil = 0L
+    }
+}
+
+class PcView : ThemedActivity(), AdapterFragmentCallbacks, ShakeDetector.Listener, EasyTierController.VpnPermissionCallback {
 
     // Constants
     companion object {
         private const val REFRESH_DEBOUNCE_DELAY = 150L
+        private const val STARTUP_UPDATE_CHECK_DELAY = 5000L
+        private const val STARTUP_DIALOG_GAP_DELAY = 250L
         private const val SHAKE_DEBOUNCE_INTERVAL = 3000L
         private const val MAX_DAILY_REFRESH = 7
         private const val VPN_PERMISSION_REQUEST_CODE = 101
-        private const val QR_SCAN_REQUEST_CODE = 102
+        private const val ADD_COMPUTER_REQUEST_CODE = 102
 
         private const val REFRESH_PREF_NAME = "RefreshLimit"
         private const val REFRESH_COUNT_KEY = "refresh_count"
@@ -166,15 +217,20 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         private const val SECONDARY_SCREEN_ID = 14
         private const val DISABLE_IPV6_ID = 15
         private const val OPEN_WEBUI_ID = 16
+        private const val MORE_ACTIONS_ID = 17
+        private const val NETWORK_QUALITY_ID = 18
+        private const val ADD_PC_MANUALLY_ID = 19
+        private const val ADD_PC_QR_SCAN_ID = 20
 
-        private const val OFFICIAL_SITE_URL = "https://www.alkaidlab.com/"
     }
 
     // UI Components
-    private var noPcFoundLayout: RelativeLayout? = null
+    private var noPcFoundLayout: View? = null
     private lateinit var pcGridAdapter: PcGridAdapter
     private var pcListView: AbsListView? = null
     private var backgroundImageView: ImageView? = null
+    /** 当前主题 overlay 已使用的背景色相桶（用于检测背景刷新后的桶位变化）。 */
+    private var themedBgAccentBucket = Int.MIN_VALUE
     private var topSafeArea: Space? = null
 
     // State
@@ -184,8 +240,13 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     private var inForeground = false
     private var completeOnCreateCalled = false
     private var pendingSplashFadeIn = true
+    private var backgroundSourceDialogShowing = false
+    private var startupUpdateCheckPending = false
+    private var startupUpdateCheckRan = false
     private var lastShakeTime = 0L
     private var activeSceneNumber: Int? = null
+    private var pendingAddedComputerUuid: String? = null
+    private val exitGate = PcViewExitGate()
 
     // Helpers
     private lateinit var shortcutHelper: ShortcutHelper
@@ -199,12 +260,16 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     // reload cancels any in-flight Glide work from the previous source so a late
     // completion cannot overpaint the newer selection.
     private var backgroundLoadJob: Job? = null
+    private val backgroundTargetLock = Any()
+    private var backgroundLoadGeneration = 0
+    private var backgroundFutureTarget: FutureTarget<Bitmap>? = null
+    /** 背景显示层的异步 Glide 请求（CustomTarget），换代时显式取消，防旧图迟到覆盖新图。 */
+    private var backgroundDisplayTarget: Target<Drawable>? = null
     private var lastBackgroundSource: BackgroundSource? = null
     private var backgroundPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     // Managers
     private var managerBinder: ComputerManagerService.ComputerManagerBinder? = null
-    private lateinit var bitmapLruCache: LruCache<String, Bitmap>
 
     // Handlers
     private val refreshHandler = Handler(Looper.getMainLooper())
@@ -229,6 +294,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             // 即便预热慢于首次 tryPollIp，也只是把"加密初始化"这段时间从串行变成
             // 与网络往返重叠，最坏情况持平、最佳情况节省整段证书时间。
             managerBinder = localBinder
+            showPendingAddedComputer()
             startComputerUpdates()
 
             // 后台预热：等 DiscoveryService bind（mDNS 可能还没好），并把客户端证书
@@ -241,6 +307,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
 
         override fun onServiceDisconnected(className: ComponentName) {
             managerBinder = null
+            stopComputerUpdates()
         }
     }
 
@@ -252,6 +319,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         // androidx core-splashscreen backport shows the static icon over splash_bg and then
         // hands control to postSplashScreenTheme (AppTheme).
         val splashScreen = installSplashScreen()
+        themedBgAccentBucket = BgAccent.bucket(this)
         // Hold the splash on screen until PcView's real content view is inflated
         // (completeOnCreate -> initializeViews -> setContentView(activity_pc_view)).
         // Without this, the system fires onExitAnimationListener as soon as the
@@ -290,6 +358,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             set.start()
         }
         super.onCreate(savedInstanceState)
+        ConfigurationSyncScheduler.runNow(this)
 
         //自动获取无障碍权限
         try {
@@ -315,7 +384,6 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
 
         easyTierController = EasyTierController(this, this)
         inForeground = true
-        initBitmapCache()
 
         val glPrefs = GlPreferences.readPreferences(this)
         if (glPrefs.savedFingerprint != Build.FINGERPRINT || glPrefs.glRenderer.isEmpty()) {
@@ -331,6 +399,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         if (completeOnCreateCalled) {
             initializeViews()
         }
+        AboutDialogLauncher.onConfigurationChanged(this, newConfig)
     }
 
     override fun onResume() {
@@ -343,10 +412,50 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         startShakeDetector()
     }
 
+    @Deprecated("Deprecated in Android")
+    override fun onBackPressed() {
+        requestPcViewExit()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            event.keyCode != KeyEvent.KEYCODE_BUTTON_B &&
+            event.keyCode != KeyEvent.KEYCODE_ESCAPE &&
+            event.keyCode != KeyEvent.KEYCODE_BACK
+        ) {
+            exitGate.cancel()
+        }
+
+        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_B ||
+            event.keyCode == KeyEvent.KEYCODE_ESCAPE
+        ) {
+            if (super.dispatchKeyEvent(event)) {
+                exitGate.cancel()
+                return true
+            }
+            return UiDismissKeyHandler.handle(
+                event.action,
+                event.keyCode,
+                ::requestPcViewExit,
+                dismissOnBack = false
+            )
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun requestPcViewExit() {
+        if (exitGate.requestExit(SystemClock.uptimeMillis())) {
+            finish()
+        } else {
+            showToast(getString(R.string.pcview_press_back_again_to_exit))
+        }
+    }
+
     override fun onPause() {
         super.onPause()
+        exitGate.cancel()
         inForeground = false
-        stopComputerUpdates(false)
+        stopComputerUpdates()
 
         analyticsManager?.stopUsageTracking()
         stopShakeDetector()
@@ -358,6 +467,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     }
 
     override fun onDestroy() {
+        AboutDialogLauncher.release(this)
         super.onDestroy()
 
         uiScope.cancel()
@@ -371,7 +481,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         }
         unregisterBackgroundReceiver()
         unregisterBackgroundPrefsListener()
-        backgroundLoadJob?.cancel()
+        cancelPreviousBackgroundLoad()
 
         analyticsManager?.cleanup()
         if (pendingRefreshRunnable != null) {
@@ -381,16 +491,6 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     }
 
     // Initialization Methods
-
-    private fun initBitmapCache() {
-        val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-        val cacheSize = maxMemory / 8
-        bitmapLruCache = object : LruCache<String, Bitmap>(cacheSize) {
-            override fun sizeOf(key: String, value: Bitmap): Int {
-                return value.byteCount / 1024
-            }
-        }
-    }
 
     private fun initGlRenderer(glPrefs: GlPreferences) {
         val surfaceView = GLSurfaceView(this)
@@ -419,11 +519,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         analyticsManager = AnalyticsManager.getInstance(this)
         analyticsManager?.logAppLaunch()
         // 延后 5 秒再做更新检查，避免一打开 PcView 就被对话框打断浏览
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (!isFinishing && !isDestroyed) {
-                UpdateManager.checkForUpdatesOnStartup(this)
-            }
-        }, 5000)
+        scheduleStartupUpdateCheck()
 
         bindService(Intent(this, ComputerManagerService::class.java), serviceConnection,
             BIND_AUTO_CREATE
@@ -439,6 +535,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     }
 
     private fun initializeViews() {
+        val loadGeneration = cancelPreviousBackgroundLoad()
         setContentView(R.layout.activity_pc_view)
         UiHelper.notifyNewRootView(this)
 
@@ -471,12 +568,36 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             }
         }
 
+        // Keep the edge-anchored scene rail clear of navigation bars and display cutouts.
+        findViewById<View>(R.id.scenePresetContainer)?.let { sceneRail ->
+            val initialParams = sceneRail.layoutParams as ViewGroup.MarginLayoutParams
+            val baseBottomMargin = initialParams.bottomMargin
+            val baseEndMargin = initialParams.marginEnd
+            ViewCompat.setOnApplyWindowInsetsListener(sceneRail) { v, windowInsets ->
+                val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+                val displayCutout = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout())
+                val safeBottom = maxOf(systemBars.bottom, displayCutout.bottom)
+                val safeEnd = if (ViewCompat.getLayoutDirection(v) == ViewCompat.LAYOUT_DIRECTION_RTL) {
+                    maxOf(systemBars.left, displayCutout.left)
+                } else {
+                    maxOf(systemBars.right, displayCutout.right)
+                }
+                (v.layoutParams as ViewGroup.MarginLayoutParams).apply {
+                    bottomMargin = baseBottomMargin + safeBottom
+                    marginEnd = baseEndMargin + safeEnd
+                    v.layoutParams = this
+                }
+                windowInsets
+            }
+            ViewCompat.requestApplyInsets(sceneRail)
+        }
+
         clientName = Settings.Global.getString(contentResolver, "device_name")
             ?: Build.MODEL
             ?: "Moonlight V+ Client"
         backgroundImageView = findViewById(R.id.pcBackgroundImage)
 
-        loadBackgroundImage()
+        loadBackgroundImage(loadGeneration)
         setupBackgroundImageLongPress()
         initSceneButtons()
         maybeShowBackgroundSourceDialog()
@@ -492,24 +613,275 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         addAddComputerCard()
         updateNoPcFoundVisibility()
         handleInitialLoad()
+        maybeShowPcViewFeatureGuide()
+    }
+
+    private fun maybeShowPcViewFeatureGuide() {
+        ViewFeatureGuide.showWhenReady(
+            activity = this,
+            spec = FeatureGuideRegistry.PcViewDiscovery
+        ) {
+            val hostCard = currentGuideHostCard() ?: return@showWhenReady emptyList()
+
+            buildList {
+                add(ViewFeatureGuideStep(
+                    { currentGuideHostCard() },
+                    getString(R.string.pcview_guide_host_title),
+                    getString(R.string.pcview_guide_host_body)
+                ))
+                findViewById<View>(R.id.pcToolbarMenuButton)?.let {
+                    add(ViewFeatureGuideStep(
+                        it,
+                        getString(R.string.pcview_guide_more_title),
+                        getString(R.string.pcview_guide_more_body)
+                    ))
+                }
+                findViewById<View>(R.id.scenePresetContainer)?.let {
+                    add(ViewFeatureGuideStep(
+                        it,
+                        getString(R.string.pcview_guide_scene_title),
+                        getString(R.string.pcview_guide_scene_body)
+                    ))
+                }
+            }
+        }
+    }
+
+    private fun currentGuideHostCard(): View? {
+        val list = pcListView ?: return null
+        for (childIndex in 0 until list.childCount) {
+            val adapterPosition = list.firstVisiblePosition + childIndex
+            val item = pcGridAdapter.getItem(adapterPosition) as? ComputerObject ?: continue
+            if (!PcGridAdapter.isAddComputerCard(item)) {
+                return list.getChildAt(childIndex)
+            }
+        }
+        return null
     }
 
     private fun setupButtons() {
         val settingsButton = findViewById<ImageButton>(R.id.settingsButton)
-        val restoreSessionButton = findViewById<ImageButton>(R.id.restoreSessionButton)
         val aboutButton = findViewById<ImageButton>(R.id.aboutButton)
         val easyTierButton = findViewById<ImageButton>(R.id.easyTierControlButton)
-        val toggleUnpairedButton = findViewById<ImageButton>(R.id.toggleUnpairedButton)
+        val toolbarMenuButton = findViewById<ImageButton>(R.id.pcToolbarMenuButton)
 
         settingsButton.setOnClickListener { startActivity(Intent(this, StreamSettings::class.java)) }
-        restoreSessionButton.setOnClickListener { restoreLastSession() }
 
-        aboutButton?.setOnClickListener { showAboutDialog() }
+        aboutButton?.setOnClickListener { AboutDialogLauncher.show(this) }
         easyTierButton?.setOnClickListener { showEasyTierControlDialog() }
-        toggleUnpairedButton?.let { btn ->
-            updateToggleUnpairedButtonIcon(btn)
-            btn.setOnClickListener { toggleUnpairedDevices(btn) }
+        toolbarMenuButton?.setOnClickListener { showPcToolbarMenu(it) }
+    }
+
+    private fun showPcToolbarMenu(anchor: View) {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val popupWidth = dpToPx(if (isLandscape) 256 else 236)
+
+        lateinit var popup: PopupWindow
+        val menu = object : LinearLayout(this) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (UiDismissKeyHandler.handle(event.action, event.keyCode, popup::dismiss)) {
+                    return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(4), dpToPx(6), dpToPx(4), dpToPx(6))
+            background = ContextCompat.getDrawable(this@PcView, R.drawable.pc_toolbar_menu_panel_bg)
         }
+
+        popup = PopupWindow(menu, popupWidth, ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dpToPx(8).toFloat()
+            }
+        }
+
+        addToolbarMenuItem(
+            menu,
+            R.drawable.ic_restore,
+            getString(R.string.pcview_toolbar_restore_session)
+        ) {
+            popup.dismiss()
+            restoreLastSession()
+        }
+
+        val showUnpaired = pcGridAdapter.isShowUnpairedDevices()
+        addToolbarMenuItem(
+            menu,
+            if (showUnpaired) R.drawable.ic_visibility_off else R.drawable.ic_visibility,
+            getString(
+                if (showUnpaired) R.string.pcview_toolbar_toggle_unpaired_hide
+                else R.string.pcview_toolbar_toggle_unpaired_show
+            )
+        ) {
+            popup.dismiss()
+            toggleUnpairedDevices()
+        }
+
+        addToolbarMenuItem(
+            menu,
+            R.drawable.ic_theme_mode,
+            getString(R.string.pcview_toolbar_theme),
+            getThemeSummary(),
+            accent = true
+        ) {
+            popup.dismiss()
+            showThemeModeDialog()
+        }
+
+        menu.measure(
+            View.MeasureSpec.makeMeasureSpec(popupWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+
+        val anchorLocation = IntArray(2)
+        anchor.getLocationOnScreen(anchorLocation)
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+        val menuHeight = menu.measuredHeight
+        val anchorLeft = anchorLocation[0]
+        val anchorTop = anchorLocation[1]
+        val anchorRight = anchorLeft + anchor.width
+        val anchorBottom = anchorTop + anchor.height
+
+        val popupX = if (isLandscape) {
+            anchorRight
+        } else {
+            anchorRight - popupWidth
+        }.coerceIn(0, (screenWidth - popupWidth).coerceAtLeast(0))
+        val desiredY = if (anchorBottom + menuHeight > screenHeight) {
+            anchorTop - menuHeight
+        } else {
+            anchorBottom
+        }
+        val popupY = desiredY.coerceIn(0, (screenHeight - menuHeight).coerceAtLeast(0))
+        popup.showAtLocation(anchor.rootView, Gravity.NO_GRAVITY, popupX, popupY)
+    }
+
+    private fun addToolbarMenuItem(
+        parent: LinearLayout,
+        iconRes: Int,
+        title: String,
+        subtitle: String? = null,
+        accent: Boolean = false,
+        onClick: () -> Unit
+    ) {
+        val iconColor = ColorStateList.valueOf(
+            if (accent) UiHelper.accentColor(this)
+            else ContextCompat.getColor(this, R.color.ui_shell_text_secondary)
+        )
+        val titleColor = ContextCompat.getColor(this, R.color.ui_shell_text_primary)
+        val subtitleColor = ContextCompat.getColor(this, R.color.ui_shell_text_secondary)
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            background = ContextCompat.getDrawable(this@PcView, R.drawable.pc_toolbar_menu_item_bg)
+            minimumHeight = dpToPx(if (subtitle == null) 46 else 50)
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
+            setOnClickListener { onClick() }
+        }
+
+        row.addView(ImageView(this).apply {
+            setImageResource(iconRes)
+            imageTintList = iconColor
+        }, LinearLayout.LayoutParams(dpToPx(22), dpToPx(22)).apply {
+            marginEnd = dpToPx(10)
+        })
+
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@PcView).apply {
+                text = title
+                textSize = 14f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(titleColor)
+                includeFontPadding = false
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            if (subtitle != null) {
+                addView(TextView(this@PcView).apply {
+                    text = subtitle
+                    textSize = 11f
+                    setTextColor(subtitleColor)
+                    includeFontPadding = false
+                    setPadding(0, dpToPx(3), 0, 0)
+                }, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ))
+            }
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        parent.addView(row, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = dpToPx(1)
+            bottomMargin = dpToPx(1)
+        })
+    }
+
+    private fun getThemeSummary(): String = getString(
+        R.string.theme_summary,
+        getThemeModeLabel(AppTheme.getAppThemeMode(this)),
+        getString(if (AppTheme.getAccentMode(this) == AppTheme.ACCENT_MODE_BG)
+            R.string.theme_accent_background else R.string.theme_accent_pink),
+    )
+
+    private fun showThemeModeDialog() {
+        val content = layoutInflater.inflate(R.layout.dialog_app_theme, null)
+        val modeGroup = content.findViewById<android.widget.RadioGroup>(R.id.themeModeGroup)
+        val accentGroup = content.findViewById<android.widget.RadioGroup>(R.id.themeAccentGroup)
+        val modeIds = mapOf(
+            R.id.themeSystem to AppTheme.THEME_MODE_SYSTEM,
+            R.id.themeLight to AppTheme.THEME_MODE_LIGHT,
+            R.id.themeDark to AppTheme.THEME_MODE_DARK,
+        )
+        modeGroup.check(modeIds.entries.first { it.value == AppTheme.getAppThemeMode(this) }.key)
+        accentGroup.check(if (AppTheme.getAccentMode(this) == AppTheme.ACCENT_MODE_BG)
+            R.id.themeBackgroundAccent else R.id.themePinkAccent)
+        val dialog = AlertDialog.Builder(this, R.style.AppDialogStyle)
+            .setTitle(R.string.pcview_theme_dialog_title)
+            .setView(content)
+            .setPositiveButton(R.string.dialog_button_ok) { _, _ ->
+                AppTheme.save(this, modeIds.getValue(modeGroup.checkedRadioButtonId),
+                    if (accentGroup.checkedRadioButtonId == R.id.themeBackgroundAccent)
+                        AppTheme.ACCENT_MODE_BG else AppTheme.ACCENT_MODE_PINK)
+                recreate()
+            }
+            .setNegativeButton(R.string.dialog_button_cancel, null)
+            .create()
+        dialog.show()
+        AppDialogStyler.apply(dialog, this)
+    }
+
+    /**
+     * 背景换桶后重染工具栏上以 ?attr/appAccent 着色的图标。
+     * 矢量在膨胀时一次性解析主题属性，主题 overlay 更新后不会自动重解析。
+     */
+    private fun refreshAccentTintedToolbarIcons() {
+        val tint = ColorStateList.valueOf(UiHelper.accentColor(this))
+        findViewById<ImageButton?>(R.id.aboutButton)?.imageTintList = tint
+        findViewById<ImageButton?>(R.id.easyTierControlButton)?.imageTintList = tint
+    }
+
+    private fun getThemeModeLabel(mode: String): String {
+        return when (mode) {
+            AppTheme.THEME_MODE_LIGHT -> getString(R.string.pcview_theme_light)
+            AppTheme.THEME_MODE_DARK -> getString(R.string.pcview_theme_dark)
+            else -> getString(R.string.pcview_theme_follow_system)
+        }
+    }
+
+    private fun dpToPx(value: Int): Int {
+        return (value * resources.displayMetrics.density + 0.5f).toInt()
     }
 
     private fun setupAdapterFragment() {
@@ -547,39 +919,32 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     // source returns, and cancels any in-flight load on reload so a stale
     // request can never overpaint a newer one.
 
-    private fun loadBackgroundImage() {
+    private fun loadBackgroundImage(existingGeneration: Int? = null) {
         if (backgroundImageView == null) return
 
-        // Cancel any previous async load; this both drops stale completions
-        // and tells Glide to stop whatever request was targeting the view.
-        backgroundLoadJob?.cancel()
-        Glide.with(this@PcView).clear(backgroundImageView!!)
+        val loadGeneration = existingGeneration ?: cancelPreviousBackgroundLoad()
 
-        val source = BackgroundSource.current(this)
         val orientation = resources.configuration.orientation
-        val target = source.resolveTarget(this, orientation)
+        val resolved = BackgroundSource.resolveCurrentTarget(this, orientation)
+        val source = resolved.source
+        val target = resolved.target
         lastBackgroundSource = source
 
         if (target == null) {
             // "none" or self-demoted bad state → leave the view empty.
             backgroundImageView?.setImageDrawable(null)
+            BgAccent.clear(this)
+            refreshBackgroundAccent(BgAccent.NO_BUCKET)
             return
         }
 
         backgroundLoadJob = uiScope.launch {
             try {
                 val bitmap = withContext(Dispatchers.IO) {
-                    Glide.with(this@PcView as Context)
-                        .asBitmap()
-                        .load(resolveGlideTarget(target))
-                        .skipMemoryCache(true)
-                        .diskCacheStrategy(DiskCacheStrategy.NONE)
-                        .submit()
-                        .get()
+                    decodeBackgroundBitmap(resolved, loadGeneration)
                 }
-                if (bitmap != null && isActive) {
-                    bitmapLruCache.put(target, bitmap)
-                    applyBlurredBackground(bitmap)
+                if (isActive) {
+                    applyNewBackgroundAndAccent(bitmap, loadGeneration)
                 }
             } catch (_: CancellationException) {
                 // Superseded by a newer load; nothing to do.
@@ -591,10 +956,6 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         }
     }
 
-    /** Currently resolved target (URL or file path) for the active background source, or null. */
-    private fun currentBackgroundTarget(): String? =
-        BackgroundSource.current(this).resolveTarget(this, resources.configuration.orientation)
-
     /** Glide target normalization: HTTP URLs go straight, filesystem paths become Files. */
     private fun resolveGlideTarget(target: String): Any {
         if (target.startsWith("http")) return target
@@ -603,13 +964,149 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         else target // let Glide surface the error
     }
 
-    private fun applyBlurredBackground(bitmap: Bitmap) {
+    /**
+     * Local backgrounds never need more pixels than the display. Decoding a
+     * gallery image at its original dimensions can exceed Android's Canvas
+     * bitmap limit before the ImageView can scale it (issue #447).
+     */
+    private fun backgroundDecodeSize(): Pair<Int, Int> {
+        val metrics = resources.displayMetrics
+        return metrics.widthPixels.coerceAtLeast(1) to metrics.heightPixels.coerceAtLeast(1)
+    }
+
+    private fun decodeBackgroundBitmap(
+        resolved: BackgroundSource.ResolvedTarget,
+        loadGeneration: Int
+    ): Bitmap {
+        val target = requireNotNull(resolved.target)
+        val (width, height) = backgroundDecodeSize()
+        val request = Glide.with(this@PcView as Context)
+            .asBitmap()
+            .load(resolveGlideTarget(target))
+            .skipMemoryCache(true)
+            .signature(ObjectKey(resolved.cacheKey))
+            // Keep the exact response bytes so settings can reuse the image
+            // selected by random-image APIs instead of issuing a second draw.
+            .diskCacheStrategy(DiskCacheStrategy.DATA)
+            // 显示解码一律按屏幕尺寸降采样。随机图源可能返回 8K 级原图，
+            // 全分辨率位图塞进 ImageView 会触发 "Canvas: trying to draw too
+            // large bitmap" 崩溃；长按保存走 DATA 磁盘缓存独立重解码，不受影响。
+            .override(width, height)
+            .downsample(DownsampleStrategy.CENTER_INSIDE)
+
+        val futureTarget = if (resolved.source !== BackgroundSource.Local) {
+            request.submit()
+        } else {
+            request
+                .apply(
+                    RequestOptions()
+                        .format(DecodeFormat.PREFER_RGB_565)
+                )
+                .submit(width, height)
+        }
+
+        val retained = synchronized(backgroundTargetLock) {
+            if (loadGeneration != backgroundLoadGeneration) {
+                false
+            } else {
+                backgroundFutureTarget = futureTarget
+                true
+            }
+        }
+        if (!retained) {
+            futureTarget.cancel(true)
+            Glide.with(applicationContext).clear(futureTarget)
+            throw CancellationException("Background load was superseded")
+        }
+
+        return futureTarget.get()
+    }
+
+    /**
+     * Stops the previous decode after releasing both Glide targets. Returns a
+     * token that prevents an older request from replacing a newer wallpaper.
+     */
+    private fun cancelPreviousBackgroundLoad(): Int {
+        backgroundLoadJob?.cancel()
+        backgroundImageView?.let { Glide.with(applicationContext).clear(it) }
+        backgroundDisplayTarget?.let { Glide.with(applicationContext).clear(it) }
+        backgroundDisplayTarget = null
+
+        val (generation, previousTarget) = synchronized(backgroundTargetLock) {
+            backgroundLoadGeneration += 1
+            backgroundLoadGeneration to backgroundFutureTarget.also {
+                backgroundFutureTarget = null
+            }
+        }
+        previousTarget?.let {
+            it.cancel(true)
+            Glide.with(applicationContext).clear(it)
+        }
+        return generation
+    }
+
+    /**
+     * 新背景位图落地：先提取主导色相并同步强调色（跟随壁纸模式下桶位变化时
+     * 重叠 overlay、重绑列表、重染工具栏图标——不能 recreate：随机图源每次
+     * 加载都是新图，recreate 会触发无限循环），再做模糊处理上屏。
+     * 所有背景加载路径（loadBackgroundImage / refreshBackgroundImage）都必须走这里，
+     * 否则强调色会落后背景一次刷新。
+     */
+    private suspend fun applyNewBackgroundAndAccent(bitmap: Bitmap, loadGeneration: Int) {
+        // 先于模糊处理提取主导色相（源头图信息量最大）
+        val bucket = withContext(Dispatchers.Default) { BgAccent.extractHueBucket(bitmap) }
+        if (loadGeneration != backgroundLoadGeneration) return
+        BgAccent.saveBucket(this, bucket)
+        refreshBackgroundAccent(bucket)
+        applyBlurredBackground(bitmap, loadGeneration)
+    }
+
+    private fun refreshBackgroundAccent(bucket: Int) {
+        if (bucket == themedBgAccentBucket) return
+        themedBgAccentBucket = bucket
+        AppTheme.applyTo(this)
+        pcGridAdapter.notifyDataSetChanged()
+        refreshAccentTintedToolbarIcons()
+        findViewById<com.limelight.ui.HostSearchRadarView>(R.id.host_search_radar)?.refreshAccentColor()
+    }
+
+    private fun applyBlurredBackground(bitmap: Bitmap, loadGeneration: Int) {
         if (backgroundImageView == null) return
+        // 兜底钳制：任何路径传入的位图都不得超过 2 倍屏幕像素，防止 Canvas 崩溃
+        val metrics = resources.displayMetrics
+        val maxPixels = metrics.widthPixels.toLong() * metrics.heightPixels * 2
+        val bitmapPixels = bitmap.width.toLong() * bitmap.height
+        val safe = if (bitmapPixels > maxPixels) {
+            val scale = Math.sqrt(maxPixels.toDouble() / bitmapPixels)
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            bitmap
+        }
+        val displayTarget = object : CustomTarget<Drawable>() {
+            override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
+                // 代际守卫：旧代的慢速模糊完成后不得覆盖新一代背景
+                if (loadGeneration == backgroundLoadGeneration) {
+                    backgroundImageView?.setImageDrawable(resource)
+                }
+            }
+
+            override fun onLoadCleared(placeholder: Drawable?) {
+                if (loadGeneration == backgroundLoadGeneration) {
+                    backgroundImageView?.setImageDrawable(placeholder)
+                }
+            }
+        }
+        backgroundDisplayTarget = displayTarget
         Glide.with(this as Context)
-                .load(bitmap)
+                .load(safe)
                 .apply(RequestOptions.bitmapTransform(BlurTransformation(2, 3)))
                 .transform(ColorFilterTransformation(Color.argb(120, 0, 0, 0)))
-                .into(backgroundImageView!!)
+                .into(displayTarget)
     }
 
     private fun handleGlideException(e: ExecutionException) {
@@ -629,6 +1126,31 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             saveImageWithPermissionCheck()
             true
         }
+    }
+
+    private fun scheduleStartupUpdateCheck(delayMs: Long = STARTUP_UPDATE_CHECK_DELAY) {
+        refreshHandler.postDelayed({ runStartupUpdateCheckWhenIdle() }, delayMs)
+    }
+
+    private fun runStartupUpdateCheckWhenIdle() {
+        if (startupUpdateCheckRan || isFinishing || isDestroyed) {
+            return
+        }
+        if (backgroundSourceDialogShowing) {
+            startupUpdateCheckPending = true
+            return
+        }
+
+        startupUpdateCheckPending = false
+        startupUpdateCheckRan = true
+        UpdateManager.checkForUpdatesOnStartup(this)
+    }
+
+    private fun resumePendingStartupUpdateCheck() {
+        if (!startupUpdateCheckPending || backgroundSourceDialogShowing) {
+            return
+        }
+        scheduleStartupUpdateCheck(STARTUP_DIALOG_GAP_DELAY)
     }
 
     /**
@@ -664,14 +1186,9 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             BackgroundSource.Pipw   to R.string.background_source_pipw,
             BackgroundSource.None   to R.string.background_source_none,
         )
-        // NOTE: AlertDialog drops items if setMessage is also set (they fight for
-        // the same content slot). Inline the explanation into the title and keep
-        // the dialog cancellable so users can always back out.
-        val title = getString(R.string.background_source_dialog_title) + "\n\n" +
-                getString(R.string.background_source_dialog_message)
 
-        AlertDialog.Builder(this)
-            .setTitle(title)
+        val dialog = AlertDialog.Builder(this, R.style.AppDialogStyle)
+            .setCustomTitle(createBackgroundSourceDialogHeader())
             .setItems(choices.map { getString(it.second) }.toTypedArray()) { _, which ->
                 BackgroundSource.setActive(this, choices[which].first)
             }
@@ -682,45 +1199,77 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             .setOnCancelListener {
                 BackgroundSource.setActive(this, BackgroundSource.Auto)
             }
-            .show()
+            .create()
+
+        dialog.setOnDismissListener {
+            backgroundSourceDialogShowing = false
+            resumePendingStartupUpdateCheck()
+        }
+        backgroundSourceDialogShowing = true
+        dialog.show()
+        AppDialogStyler.applySystemChoiceList(dialog, this)
+    }
+
+    private fun createBackgroundSourceDialogHeader(): View {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density + 0.5f).toInt()
+        fun matchWrapParams() = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(22), dp(28), dp(8))
+            addView(TextView(this@PcView).apply {
+                text = getString(R.string.background_source_dialog_title)
+                gravity = Gravity.CENTER
+                setTypeface(typeface, Typeface.BOLD)
+                textSize = 20f
+                setTextColor(ContextCompat.getColor(this@PcView, R.color.app_dialog_title_color))
+                setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
+            }, matchWrapParams())
+            addView(TextView(this@PcView).apply {
+                text = getString(R.string.background_source_dialog_message)
+                gravity = Gravity.CENTER
+                textSize = 14f
+                setLineSpacing(dp(2).toFloat(), 1f)
+                setPadding(0, dp(8), 0, 0)
+                setTextColor(ContextCompat.getColor(this@PcView, R.color.app_dialog_subtitle_color))
+                setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
+            }, matchWrapParams())
+        }
     }
 
     private fun refreshBackgroundImage(isFromShake: Boolean) {
         if (backgroundImageView == null) return
 
-        backgroundLoadJob?.cancel()
-        Glide.with(this@PcView).clear(backgroundImageView!!)
+        val loadGeneration = cancelPreviousBackgroundLoad()
+        BackgroundSource.invalidateResolvedTarget()
 
-        val source = BackgroundSource.current(this)
         val orientation = resources.configuration.orientation
-        val target = source.resolveTarget(this, orientation)
+        val resolved = BackgroundSource.resolveCurrentTarget(this, orientation)
+        val source = resolved.source
+        val target = resolved.target
         lastBackgroundSource = source
 
         if (target == null) {
             backgroundImageView?.setImageDrawable(null)
+            BgAccent.clear(this)
+            refreshBackgroundAccent(BgAccent.NO_BUCKET)
             return
         }
-        bitmapLruCache.remove(target)
-
         backgroundLoadJob = uiScope.launch {
             try {
                 val bitmap = withContext(Dispatchers.IO) {
-                    Glide.with(this@PcView as Context)
-                        .asBitmap()
-                        .load(resolveGlideTarget(target))
-                        .skipMemoryCache(true)
-                        .diskCacheStrategy(DiskCacheStrategy.NONE)
-                        .submit()
-                        .get()
+                    decodeBackgroundBitmap(resolved, loadGeneration)
                 }
-                if (bitmap != null && isActive) {
-                    bitmapLruCache.put(target, bitmap)
-                    applyBlurredBackground(bitmap)
+                if (isActive) {
+                    applyNewBackgroundAndAccent(bitmap, loadGeneration)
                     if (isFromShake) {
                         showToast(getString(R.string.background_refreshed_with_remaining, getRemainingRefreshCount()))
                     }
-                } else if (bitmap == null) {
-                    showToast(getString(R.string.refresh_failed_please_retry))
                 }
             } catch (_: CancellationException) {
                 // superseded
@@ -768,75 +1317,76 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     }
 
     private fun saveImage() {
-        val target = currentBackgroundTarget()
-        val bitmap = if (target != null) bitmapLruCache.get(target) else null
-
-        if (bitmap == null) {
-            if (backgroundImageView != null && backgroundImageView?.drawable != null) {
-                showToast(getString(R.string.downloading_image_please_wait))
-                downloadAndSaveImage()
-            } else {
-                showToast(getString(R.string.image_not_loaded_please_retry))
-            }
+        val resolved = BackgroundSource.resolveCurrentTarget(
+            this,
+            resources.configuration.orientation
+        )
+        if (resolved.target == null || backgroundImageView?.drawable == null) {
+            showToast(getString(R.string.image_not_loaded_please_retry))
             return
         }
-        saveBitmapToFile(bitmap)
+
+        showToast(getString(R.string.downloading_image_please_wait))
+        saveResolvedBackground(resolved)
     }
 
-    private fun downloadAndSaveImage() {
+    /**
+     * Save only the bytes belonging to the wallpaper currently on screen.
+     * A cache miss must never fall back to a fresh network request because
+     * random-image endpoints can return a different wallpaper for the same URL.
+     */
+    private fun saveResolvedBackground(resolved: BackgroundSource.ResolvedTarget) {
         uiScope.launch {
             try {
-                val target = currentBackgroundTarget()
-                if (target == null) {
-                    showToast(getString(R.string.image_download_failed_retry))
-                    return@launch
+                val file = withContext(Dispatchers.IO) {
+                    saveResolvedBackgroundFromCache(resolved)
                 }
-                val bitmap = withContext(Dispatchers.IO) {
-                    Glide.with(this@PcView as Context)
-                            .asBitmap()
-                            .load(resolveGlideTarget(target))
-                            .submit()
-                            .get()
-                }
-                if (bitmap != null) {
-                    bitmapLruCache.put(target, bitmap)
-                    saveBitmapToFile(bitmap)
-                } else {
-                    showToast(getString(R.string.image_download_failed_retry))
-                }
+                refreshSystemPic(file)
+                showToast(getString(R.string.image_saved_successfully))
             } catch (e: Exception) {
                 e.printStackTrace()
-                showToast(getString(R.string.image_download_failed_with_error, e.message))
+                showToast(getString(R.string.image_save_failed_with_error, e.message))
             }
         }
     }
 
-    private fun saveBitmapToFile(bitmap: Bitmap?) {
-        if (bitmap == null) {
-            showToast(getString(R.string.image_invalid))
-            return
-        }
+    private fun saveResolvedBackgroundFromCache(
+        resolved: BackgroundSource.ResolvedTarget
+    ): File {
+        val target = requireNotNull(resolved.target)
+        val futureTarget = Glide.with(applicationContext)
+            .asBitmap()
+            .load(resolveGlideTarget(target))
+            .apply(
+                RequestOptions()
+                    .signature(ObjectKey(resolved.cacheKey))
+                    .diskCacheStrategy(DiskCacheStrategy.DATA)
+                    .onlyRetrieveFromCache(true)
+            )
+            .submit()
 
+        try {
+            return writeBitmapToFile(futureTarget.get())
+        } finally {
+            Glide.with(applicationContext).clear(futureTarget)
+        }
+    }
+
+    private fun writeBitmapToFile(bitmap: Bitmap): File {
         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "setu")
         if (!dir.exists() && !dir.mkdirs()) {
-            showToast(getString(R.string.image_save_failed_with_error, "Failed to create directory"))
-            return
+            throw IOException("Failed to create directory")
         }
 
         val fileName = "pipw-${System.currentTimeMillis()}.png"
         val file = File(dir, fileName)
-
-        try {
-            FileOutputStream(file).use { outputStream ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                outputStream.flush()
+        FileOutputStream(file).use { outputStream ->
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)) {
+                throw IOException("Failed to encode bitmap")
             }
-            refreshSystemPic(file)
-            showToast(getString(R.string.image_saved_successfully))
-        } catch (e: IOException) {
-            e.printStackTrace()
-            showToast(getString(R.string.image_save_failed_with_error, e.message))
+            outputStream.flush()
         }
+        return file
     }
 
     private fun refreshSystemPic(file: File) {
@@ -1013,18 +1563,26 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         runningPolling = true
     }
 
-    private fun stopComputerUpdates(wait: Boolean) {
-        if (managerBinder == null || !runningPolling) return
+    private fun stopComputerUpdates() {
+        if (!runningPolling) return
 
         freezeUpdates = true
         pollingCollectJob?.cancel()
         pollingCollectJob = null
         managerBinder?.stopPolling()
 
-        if (wait) {
-            managerBinder?.waitForPollingStopped()
-        }
         runningPolling = false
+    }
+
+    private suspend fun stopComputerUpdatesAndWait() {
+        val binder = managerBinder
+        val shouldWait = binder != null && runningPolling
+        stopComputerUpdates()
+        if (shouldWait) {
+            runInterruptible(Dispatchers.IO) {
+                binder?.waitForPollingStopped()
+            }
+        }
     }
 
     private fun debouncedNotifyDataSetChanged() {
@@ -1144,7 +1702,6 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
 
         if (isUnpaired && !pcGridAdapter.isShowUnpairedDevices()) {
             pcGridAdapter.setShowUnpairedDevices(true)
-            updateToggleUnpairedButtonIcon(findViewById(R.id.toggleUnpairedButton))
             showToast(getString(R.string.new_unpaired_device_shown))
         }
 
@@ -1203,7 +1760,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         try {
             addDetails.name = getString(R.string.title_add_pc)
         } catch (e: Exception) {
-            addDetails.name = "添加电脑"
+            addDetails.name = getString(R.string.title_add_pc_choose)
         }
         addDetails.state = ComputerDetails.State.UNKNOWN
 
@@ -1213,21 +1770,12 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         noPcFoundLayout?.visibility = View.INVISIBLE
     }
 
-    // Toggle Unpaired Button
+    // Toggle Unpaired Hosts
 
-    private fun toggleUnpairedDevices(button: ImageButton) {
+    private fun toggleUnpairedDevices() {
         val newState = !pcGridAdapter.isShowUnpairedDevices()
         pcGridAdapter.setShowUnpairedDevices(newState)
-        updateToggleUnpairedButtonIcon(button)
         showToast(if (newState) getString(R.string.unpaired_devices_shown) else getString(R.string.unpaired_devices_hidden))
-    }
-
-    private fun updateToggleUnpairedButtonIcon(button: ImageButton?) {
-        if (button == null) return
-        button.setImageResource(if (pcGridAdapter.isShowUnpairedDevices())
-            R.drawable.ic_visibility
-        else
-            R.drawable.ic_visibility_off)
     }
 
     // Scene Configuration Methods
@@ -1235,6 +1783,8 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     private data class SceneConfiguration(
             val width: Int,
             val height: Int,
+            val isNativeResolution: Boolean,
+            val isCustomResolution: Boolean,
             val fps: Int,
             val bitrate: Int,
             val enableAdaptiveBitrate: Boolean,
@@ -1258,6 +1808,8 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         fun applyTo(prefs: PreferenceConfiguration): PreferenceConfiguration {
             prefs.width = width
             prefs.height = height
+            prefs.isNativeResolution = isNativeResolution
+            prefs.isCustomResolution = isCustomResolution
             prefs.fps = fps
             prefs.bitrate = bitrate
             prefs.enableAdaptiveBitrate = enableAdaptiveBitrate
@@ -1284,6 +1836,8 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             return JSONObject().apply {
                 put("width", width)
                 put("height", height)
+                put("isNativeResolution", isNativeResolution)
+                put("isCustomResolution", isCustomResolution)
                 put("fps", fps)
                 put("bitrate", bitrate)
                 put("enableAdaptiveBitrate", enableAdaptiveBitrate)
@@ -1311,6 +1865,8 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 return SceneConfiguration(
                         width = prefs.width,
                         height = prefs.height,
+                        isNativeResolution = prefs.isNativeResolution,
+                        isCustomResolution = prefs.isCustomResolution,
                         fps = prefs.fps,
                         bitrate = prefs.bitrate,
                         enableAdaptiveBitrate = prefs.enableAdaptiveBitrate,
@@ -1333,9 +1889,19 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             }
 
             fun fromJson(json: JSONObject, fallback: PreferenceConfiguration): SceneConfiguration {
+                val width = json.optInt("width", fallback.width)
+                val height = json.optInt("height", fallback.height)
+                val resolutionMode = resolveSceneResolutionMode(
+                    json,
+                    width,
+                    height,
+                    PreferenceConfiguration.RESOLUTIONS.asList()
+                )
                 return SceneConfiguration(
-                        width = json.optInt("width", fallback.width),
-                        height = json.optInt("height", fallback.height),
+                        width = width,
+                        height = height,
+                        isNativeResolution = resolutionMode.isNative,
+                        isCustomResolution = resolutionMode.isCustom,
                         fps = json.optInt("fps", fallback.fps),
                         bitrate = json.optInt("bitrate", fallback.bitrate),
                         enableAdaptiveBitrate = json.optBoolean("enableAdaptiveBitrate", fallback.enableAdaptiveBitrate),
@@ -1376,10 +1942,22 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                     continue
                 }
 
+                btn.isFocusable = true
+                btn.isFocusableInTouchMode = true
+                btn.nextFocusUpId = sceneButtonIds[(i - 1).coerceAtLeast(0)]
+                btn.nextFocusDownId = sceneButtonIds[(i + 1).coerceAtMost(sceneButtonIds.lastIndex)]
                 btn.setOnClickListener { applySceneConfiguration(sceneNumber) }
                 btn.setOnLongClickListener {
                     showSaveConfirmationDialog(sceneNumber)
                     true
+                }
+                btn.setOnKeyListener { _, keyCode, event ->
+                    if (keyCode != KeyEvent.KEYCODE_BUTTON_A) {
+                        false
+                    } else {
+                        if (event.action == KeyEvent.ACTION_UP) btn.performClick()
+                        true
+                    }
                 }
             }
             updateSceneButtonStates()
@@ -1453,6 +2031,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 .setPositiveButton(R.string.save_current_config_to_scene) { _, _ -> saveCurrentConfiguration(sceneNumber) }
                 .setNegativeButton(R.string.dialog_button_cancel, null)
                 .show()
+                .also { AppDialogStyler.installDismissKeys(it) }
     }
 
     private fun showSaveConfirmationDialog(sceneNumber: Int) {
@@ -1462,12 +2041,25 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 .setPositiveButton(R.string.dialog_button_save) { _, _ -> saveCurrentConfiguration(sceneNumber) }
                 .setNegativeButton(R.string.dialog_button_cancel, null)
                 .show()
+                .also { AppDialogStyler.installDismissKeys(it) }
     }
 
     private fun saveCurrentConfiguration(sceneNumber: Int) {
+        saveConfigurationToScene(
+            sceneNumber,
+            PreferenceConfiguration.readPreferences(this),
+            markActive = true
+        )
+    }
+
+    private fun saveConfigurationToScene(
+        sceneNumber: Int,
+        preferences: PreferenceConfiguration,
+        markActive: Boolean
+    ): Boolean {
         try {
             val config = SceneConfiguration
-                    .fromPreferences(PreferenceConfiguration.readPreferences(this))
+                    .fromPreferences(preferences)
                     .toJson()
 
             getSharedPreferences(SCENE_PREF_NAME, MODE_PRIVATE)
@@ -1475,11 +2067,15 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                         putString(SCENE_KEY_PREFIX + sceneNumber, config.toString())
                     }
 
-            activeSceneNumber = sceneNumber
+            if (markActive) {
+                activeSceneNumber = sceneNumber
+            }
             updateSceneButtonStates()
             showToast(getString(R.string.scene_saved_successfully, sceneNumber))
+            return true
         } catch (e: JSONException) {
             showToast(getString(R.string.config_save_failed))
+            return false
         }
     }
 
@@ -1501,7 +2097,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             var success = false
 
             try {
-                stopComputerUpdates(true)
+                stopComputerUpdatesAndWait()
 
                 val result = withContext(Dispatchers.IO) {
                     val httpConn = NvHTTP(
@@ -1580,21 +2176,33 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         }
     }
 
-    private fun showAddComputerDialog() {
-        val items = arrayOf(
-            getString(R.string.addpc_manual),
-            getString(R.string.addpc_qr_scan)
-        )
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.title_add_pc_choose))
-            .setItems(items) { _, which ->
-                if (which == 0) {
-                    startActivity(Intent(this, AddComputerManually::class.java))
-                } else {
-                    startQrScan()
+    private fun showAddComputerActionSheet() {
+        AppActionSheet.show(
+            context = this,
+            title = getString(R.string.title_add_pc_choose),
+            actions = listOf(
+                AppActionSheet.Action(
+                    id = ADD_PC_MANUALLY_ID,
+                    title = getString(R.string.addpc_manual),
+                    opensSubmenu = true
+                ),
+                AppActionSheet.Action(
+                    id = ADD_PC_QR_SCAN_ID,
+                    title = getString(R.string.addpc_qr_scan),
+                    opensSubmenu = true
+                )
+            ),
+            onAction = { action ->
+                when (action.id) {
+                    ADD_PC_MANUALLY_ID ->
+                    startActivityForResult(
+                        Intent(this, AddComputerManually::class.java),
+                        ADD_COMPUTER_REQUEST_CODE
+                    )
+                    ADD_PC_QR_SCAN_ID -> startQrScan()
                 }
             }
-            .show()
+        )
     }
 
     private fun startQrScan() {
@@ -1635,7 +2243,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             var pairedComputer: ComputerDetails? = null
 
             try {
-                stopComputerUpdates(true)
+                stopComputerUpdatesAndWait()
 
                 val result = withContext(Dispatchers.IO) {
                     // Add the computer first
@@ -1692,6 +2300,8 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                         }
                     managerBinder?.invalidateStateForComputer(uuid)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 message = e.message
             }
@@ -1781,10 +2391,12 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
 
                     if (httpConn.getPairState() == PairState.PAIRED) {
                         httpConn.unpair()
-                        if (httpConn.getPairState() == PairState.NOT_PAIRED)
+                        if (httpConn.getPairState() == PairState.NOT_PAIRED) {
+                            binder.markComputerNotPaired(computer, "Local unpair")
                             getString(R.string.unpair_success)
-                        else
+                        } else {
                             getString(R.string.unpair_fail)
+                        }
                     } else {
                         getString(R.string.unpair_error)
                     }
@@ -1809,11 +2421,45 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             showToast(getString(R.string.error_pc_offline))
             return
         }
-        if (managerBinder == null) {
+        val binder = managerBinder
+        if (binder == null) {
             showToast(getString(R.string.error_manager_not_running))
             return
         }
 
+        val target = prepareComputerWithAddress(computer)
+        if (target == null || target.activeAddress == null) {
+            showToast(getString(R.string.error_pc_offline))
+            return
+        }
+
+        if (PairStatePreflight.hasTrustedPairState(target)) {
+            openAppList(target, newlyPaired, showHiddenGames)
+            return
+        }
+
+        val spinner = SpinnerDialog.displayDialog(this,
+                resources.getString(R.string.applist_refresh_title),
+                resources.getString(R.string.applist_refresh_msg),
+                false)
+
+        uiScope.launch {
+            val isNotPaired = PairStatePreflight.isConfirmedNotPaired(target, binder, "Opening app list")
+
+            spinner.dismiss()
+            if (isFinishing || isDestroyed) {
+                return@launch
+            }
+
+            if (isNotPaired) {
+                showToast(getString(R.string.scut_not_paired))
+            } else {
+                openAppList(target, newlyPaired, showHiddenGames)
+            }
+        }
+    }
+
+    private fun openAppList(computer: ComputerDetails, newlyPaired: Boolean, showHiddenGames: Boolean) {
         val i = Intent(this, AppView::class.java)
         i.putExtra(AppView.NAME_EXTRA, computer.name)
         i.putExtra(AppView.UUID_EXTRA, computer.uuid)
@@ -1833,12 +2479,16 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             showToast(getString(R.string.error_pc_offline))
             return
         }
+        if (computer.vddCapabilityVersion == 0) {
+            showToast(getString(R.string.error_vdd_unsupported))
+            return
+        }
         if (managerBinder == null) {
             showToast(getString(R.string.error_manager_not_running))
             return
         }
 
-        quickStartStreamWithScreenMode(computer, null, true, 2)
+        quickStartStreamWithScreenMode(computer, null, true, 4)
     }
 
     // Quick Start Stream Methods
@@ -1850,7 +2500,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     private fun quickStartStream(computer: ComputerDetails, itemView: View?, isSecondaryScreen: Boolean) {
         if (computer.state != ComputerDetails.State.ONLINE || computer.pairState != PairState.PAIRED) {
             if (itemView != null) {
-                openContextMenu(itemView)
+                showHostActionSheet(computer)
             }
             return
         }
@@ -1878,26 +2528,54 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 showToast(getString(R.string.error_pc_offline))
                 return@launch
             }
-            targetComputer.useVdd = false
-
             if (targetComputer.hasMultipleLanAddresses()) {
                 showAddressSelectionDialog(targetComputer)
                 return@launch
             }
+            if (PairStatePreflight.isConfirmedNotPaired(targetComputer, managerBinder!!, "Quick start")) {
+                showToast(getString(R.string.scut_not_paired))
+                return@launch
+            }
 
-            ServerHelper.doStart(
-                this@PcView,
-                targetApp,
-                targetComputer,
-                managerBinder!!
-            )
+            startQuickStreamWithNetworkCheck(targetApp, targetComputer)
         }
+    }
+
+    private fun startQuickStreamWithNetworkCheck(app: NvApp, computer: ComputerDetails) {
+        val binder = managerBinder ?: return
+        if (!computer.supportsNetworkQualityProbe()) {
+            ServerHelper.doStart(this, app, computer, binder)
+            return
+        }
+        val endpointIdentity = computer.activeAddress?.let { "${it.address}:${it.port}" }
+        val result = StreamNetworkQualityStore.load(this, computer.uuid, endpointIdentity)
+        val prefs = PreferenceConfiguration.readPreferences(this)
+        val recommendation = result?.recommendationFor(networkDeviceDisplay())
+        if (computer.runningGameId != 0 || result == null || recommendation == null ||
+            !result.shouldWarnForBitrate(prefs.bitrate, recommendation)
+        ) {
+            ServerHelper.doStart(this, app, computer, binder)
+            return
+        }
+
+        NetworkQualitySheet.showStartWarning(
+            context = this,
+            computerName = computer.name.orEmpty(),
+            currentBitrateKbps = prefs.bitrate,
+            recommendation = recommendation,
+            onContinue = { ServerHelper.doStart(this, app, computer, binder) },
+            onUseRecommendation = {
+                if (applyNetworkRecommendation(recommendation)) {
+                    ServerHelper.doStart(this, app, computer, binder)
+                }
+            }
+        )
     }
 
     private fun quickStartStreamWithScreenMode(computer: ComputerDetails, itemView: View?, isSecondaryScreen: Boolean, screenMode: Int) {
         if (computer.state != ComputerDetails.State.ONLINE || computer.pairState != PairState.PAIRED) {
             if (itemView != null) {
-                openContextMenu(itemView)
+                showHostActionSheet(computer)
             }
             return
         }
@@ -1925,10 +2603,12 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 showToast(getString(R.string.error_pc_offline))
                 return@launch
             }
-            targetComputer.useVdd = isSecondaryScreen
-
             if (targetComputer.hasMultipleLanAddresses()) {
                 showAddressSelectionDialog(targetComputer)
+                return@launch
+            }
+            if (PairStatePreflight.isConfirmedNotPaired(targetComputer, managerBinder!!, "Secondary screen start")) {
+                showToast(getString(R.string.scut_not_paired))
                 return@launch
             }
 
@@ -1937,14 +2617,11 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 targetApp,
                 targetComputer,
                 managerBinder!!,
-                lastSettings = null
+                lastSettings = null,
+                useVdd = if (isSecondaryScreen) true else null
             )
             if (screenMode != -1) {
-                if (targetComputer.useVdd) {
-                    intent.putExtra(Game.EXTRA_VDD_SCREEN_COMBINATION_MODE, screenMode)
-                } else {
-                    intent.putExtra(Game.EXTRA_SCREEN_COMBINATION_MODE, screenMode)
-                }
+                intent.putExtra(Game.EXTRA_SCREEN_COMBINATION_MODE, screenMode)
             }
             startActivity(intent)
         }
@@ -1971,8 +2648,9 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
 
     private fun getAppListFromCache(uuid: String): List<NvApp>? {
         try {
+            val cacheKey = HostCacheKey.fromUuid(uuid) ?: return null
             val rawAppList = CacheHelper.readInputStreamToString(
-                    CacheHelper.openCacheFileForInput(cacheDir, "applist", uuid))
+                    CacheHelper.openCacheFileForInput(cacheDir, "applist", cacheKey))
             return if (rawAppList.isEmpty()) null else NvHTTP.getAppListByReader(StringReader(rawAppList))
         } catch (e: IOException) {
             LimeLog.warning("Failed to read app list from cache: " + e.message)
@@ -2033,7 +2711,13 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         }
 
         showToast(getString(R.string.restoring_session, target.name))
-        ServerHelper.doStart(this, app, target, managerBinder!!, forceResumeCurrentSession = true)
+        uiScope.launch {
+            if (PairStatePreflight.isConfirmedNotPaired(target, managerBinder!!, "Restore session")) {
+                showToast(getString(R.string.scut_not_paired))
+                return@launch
+            }
+            ServerHelper.doStart(this@PcView, app, target, managerBinder!!, forceResumeCurrentSession = true)
+        }
     }
 
     private fun showAddressSelectionDialog(computer: ComputerDetails) {
@@ -2045,105 +2729,145 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         dialog.show()
     }
 
-    // Context Menu
+    // Host Action Sheet
 
-    override fun onCreateContextMenu(menu: ContextMenu, v: View, menuInfo: ContextMenuInfo?) {
-        stopComputerUpdates(false)
-        super.onCreateContextMenu(menu, v, menuInfo)
+    private fun showHostActionSheet(details: ComputerDetails) {
+        stopComputerUpdates()
 
-        val position = getContextMenuPosition(menuInfo, v)
-        if (position < 0) return
-
-        val computer = pcGridAdapter.getItem(position) as ComputerObject
-        if (PcGridAdapter.isAddComputerCard(computer)) return
-
-        setupContextMenuHeader(menu, computer)
-        addContextMenuItems(menu, computer)
-    }
-
-    private fun getContextMenuPosition(menuInfo: ContextMenuInfo?, v: View?): Int {
-        if (menuInfo is AdapterContextMenuInfo) {
-            return menuInfo.position
+        val status = when (details.state) {
+            ComputerDetails.State.ONLINE -> getString(R.string.pcview_menu_header_online)
+            ComputerDetails.State.OFFLINE -> getString(R.string.pcview_menu_header_offline)
+            else -> getString(R.string.pcview_menu_header_unknown)
         }
-        if (v != null && v.tag is Int) {
-            return v.tag as Int
-        }
-        return -1
-    }
-
-    private fun setupContextMenuHeader(menu: ContextMenu, computer: ComputerObject) {
-        menu.clearHeader()
-        val status: String
-        when (computer.details.state) {
-            ComputerDetails.State.ONLINE ->
-                status = getString(R.string.pcview_menu_header_online)
-            ComputerDetails.State.OFFLINE -> {
-                menu.setHeaderIcon(R.drawable.ic_pc_offline)
-                status = getString(R.string.pcview_menu_header_offline)
+        AppActionSheet.show(
+            context = this,
+            title = details.name.orEmpty(),
+            subtitle = status,
+            activeStatus = details.state == ComputerDetails.State.ONLINE,
+            actions = buildHostPrimaryActions(details),
+            onAction = { handleHostAction(it.id, details) },
+            onDismiss = { selectedAction ->
+                if (selectedAction?.id != MORE_ACTIONS_ID) {
+                    startComputerUpdates()
+                }
             }
-            else ->
-                status = getString(R.string.pcview_menu_header_unknown)
-        }
-        menu.setHeaderTitle(computer.details.name + " - " + status)
+        )
     }
 
-    private fun addContextMenuItems(menu: ContextMenu, computer: ComputerObject) {
-        val details = computer.details
+    private fun buildHostPrimaryActions(details: ComputerDetails): List<AppActionSheet.Action> = buildList {
+        fun add(
+            id: Int,
+            titleRes: Int,
+            destructive: Boolean = false,
+            sectionStart: Boolean = false,
+            opensSubmenu: Boolean = false
+        ) {
+            add(AppActionSheet.Action(
+                id = id,
+                title = getString(titleRes),
+                destructive = destructive,
+                sectionStart = sectionStart,
+                opensSubmenu = opensSubmenu
+            ))
+        }
 
+        val paired = details.pairState == PairState.PAIRED
         if (details.state == ComputerDetails.State.OFFLINE || details.state == ComputerDetails.State.UNKNOWN) {
-            menu.add(Menu.NONE, WOL_ID, 1, R.string.pcview_menu_send_wol)
-        } else if (details.pairState != PairState.PAIRED) {
-            menu.add(Menu.NONE, PAIR_ID, 1, R.string.pcview_menu_pair_pc)
-            if (details.nvidiaServer) {
-                menu.add(Menu.NONE, GAMESTREAM_EOL_ID, 2, R.string.pcview_menu_eol)
-            }
+            add(WOL_ID, R.string.pcview_menu_send_wol)
+        } else if (!paired) {
+            add(PAIR_ID, R.string.pcview_menu_pair_pc)
         } else {
             if (details.runningGameId != 0) {
-                menu.add(Menu.NONE, RESUME_ID, 1, R.string.applist_menu_resume)
-                menu.add(Menu.NONE, QUIT_ID, 2, R.string.applist_menu_quit)
+                add(RESUME_ID, R.string.applist_menu_resume)
             }
-            if (details.nvidiaServer) {
-                menu.add(Menu.NONE, GAMESTREAM_EOL_ID, 3, R.string.pcview_menu_eol)
+            add(FULL_APP_LIST_ID, R.string.pcview_menu_app_list)
+            if (details.vddCapabilityVersion != 0) {
+                add(SECONDARY_SCREEN_ID, R.string.pcview_menu_secondary_screen)
             }
-            menu.add(Menu.NONE, FULL_APP_LIST_ID, 4, R.string.pcview_menu_app_list)
-            menu.add(Menu.NONE, SECONDARY_SCREEN_ID, 5, R.string.pcview_menu_secondary_screen)
-            menu.add(Menu.NONE, SLEEP_ID, 8, R.string.send_sleep_command)
         }
 
-        menu.add(Menu.NONE, TEST_NETWORK_ID, 5, R.string.pcview_menu_test_network)
-        menu.add(Menu.NONE, IPERF3_TEST_ID, 6, R.string.network_bandwidth_test)
-        // Sunshine 主机暴露 Web 管理界面（默认 https://<ip>:47990）；GFE 主机没有 WebUI
-        if (!details.nvidiaServer && resolveSunshineWebUiUrl(details) != null) {
-            menu.add(Menu.NONE, OPEN_WEBUI_ID, 6, R.string.pcview_menu_open_webui)
-        }
-        menu.add(Menu.NONE, DELETE_ID, 6, R.string.pcview_menu_delete_pc)
-        menu.add(Menu.NONE, VIEW_DETAILS_ID, 7, R.string.pcview_menu_details)
-
-        // 添加IPv6开关选项，根据当前状态显示不同操作
-        if (details.ipv6Disabled) {
-            menu.add(Menu.NONE, DISABLE_IPV6_ID, 8, R.string.pcview_menu_enable_ipv6)
+        if (paired && details.state == ComputerDetails.State.ONLINE && details.supportsNetworkQualityProbe()) {
+            val endpointIdentity = details.activeAddress?.let { "${it.address}:${it.port}" }
+            val cached = StreamNetworkQualityStore.load(this@PcView, details.uuid, endpointIdentity)
+                ?.takeIf { it.isFresh() }
+            val trailing = cached?.let {
+                val qualityRes = when (it.quality) {
+                    StreamNetworkQuality.EXCELLENT -> R.string.network_quality_excellent
+                    StreamNetworkQuality.GOOD -> R.string.network_quality_good
+                    StreamNetworkQuality.FAIR -> R.string.network_quality_fair
+                    StreamNetworkQuality.POOR -> R.string.network_quality_poor
+                }
+                getString(
+                    R.string.network_quality_menu_summary,
+                    getString(qualityRes),
+                    DateUtils.getRelativeTimeSpanString(
+                        it.testedAtEpochMs,
+                        System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS
+                    )
+                )
+            }
+            this.add(AppActionSheet.Action(
+                id = NETWORK_QUALITY_ID,
+                title = getString(R.string.network_quality_test_title),
+                sectionStart = true,
+                trailingText = trailing
+            ))
         } else {
-            menu.add(Menu.NONE, DISABLE_IPV6_ID, 8, R.string.pcview_menu_disable_ipv6)
+            add(TEST_NETWORK_ID, R.string.pcview_menu_test_network, sectionStart = true)
+        }
+        add(
+            MORE_ACTIONS_ID,
+            R.string.pcview_menu_more_actions,
+            opensSubmenu = true
+        )
+        if (paired && details.runningGameId != 0) {
+            add(QUIT_ID, R.string.applist_menu_quit, destructive = true, sectionStart = true)
         }
     }
 
-    override fun onContextMenuClosed(menu: Menu) {
-        startComputerUpdates()
+    private fun showHostMoreActionSheet(details: ComputerDetails) {
+        stopComputerUpdates()
+        AppActionSheet.show(
+            context = this,
+            title = details.name.orEmpty(),
+            subtitle = getString(R.string.pcview_menu_more_actions),
+            actions = buildHostMoreActions(details),
+            onAction = { handleHostAction(it.id, details) },
+            onDismiss = { startComputerUpdates() }
+        )
     }
 
-    override fun onContextItemSelected(item: MenuItem): Boolean {
-        val position = getContextMenuPosition(item.menuInfo, null)
-        if (position < 0) return super.onContextItemSelected(item)
+    private fun buildHostMoreActions(details: ComputerDetails): List<AppActionSheet.Action> = buildList {
+        fun add(id: Int, titleRes: Int, destructive: Boolean = false, sectionStart: Boolean = false) {
+            add(AppActionSheet.Action(
+                id = id,
+                title = getString(titleRes),
+                destructive = destructive,
+                sectionStart = sectionStart
+            ))
+        }
 
-        val computer = pcGridAdapter.getItem(position) as ComputerObject
-        if (PcGridAdapter.isAddComputerCard(computer)) return super.onContextItemSelected(item)
-
-        return handleContextMenuAction(item.itemId, computer)
+        add(IPERF3_TEST_ID, R.string.network_bandwidth_test)
+        if (!details.nvidiaServer && resolveSunshineWebUiUrl(details) != null) {
+            add(OPEN_WEBUI_ID, R.string.pcview_menu_open_webui)
+        }
+        add(VIEW_DETAILS_ID, R.string.pcview_menu_details, sectionStart = true)
+        if (details.pairState == PairState.PAIRED && details.state == ComputerDetails.State.ONLINE) {
+            add(SLEEP_ID, R.string.send_sleep_command)
+        }
+        add(
+            DISABLE_IPV6_ID,
+            if (details.ipv6Disabled) R.string.pcview_menu_enable_ipv6
+            else R.string.pcview_menu_disable_ipv6
+        )
+        if (details.nvidiaServer) {
+            add(GAMESTREAM_EOL_ID, R.string.pcview_menu_eol)
+        }
+        add(DELETE_ID, R.string.pcview_menu_delete_pc, destructive = true, sectionStart = true)
     }
 
-    private fun handleContextMenuAction(itemId: Int, computer: ComputerObject): Boolean {
-        val details = computer.details
-
+    private fun handleHostAction(itemId: Int, details: ComputerDetails): Boolean {
         return when (itemId) {
             PAIR_ID -> {
                 doPair(details)
@@ -2185,6 +2909,10 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 ServerHelper.doNetworkTest(this)
                 true
             }
+            NETWORK_QUALITY_ID -> {
+                runNetworkQualityTest(details)
+                true
+            }
             IPERF3_TEST_ID -> {
                 handleIperf3Test(details)
                 true
@@ -2205,8 +2933,183 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
                 handleOpenSunshineWebUi(details)
                 true
             }
+            MORE_ACTIONS_ID -> {
+                showHostMoreActionSheet(details)
+                true
+            }
             else -> false
         }
+    }
+
+    private fun runNetworkQualityTest(computer: ComputerDetails) {
+        val binder = managerBinder
+        if (binder == null || computer.activeAddress == null || computer.uuid.isNullOrBlank()) {
+            showToast(getString(R.string.error_pc_offline))
+            return
+        }
+
+        var testJob: Job? = null
+        val activeProbe = AtomicReference<NvHTTP?>()
+        val cancelProbe = {
+            testJob?.cancel()
+            activeProbe.getAndSet(null)?.cancelNetworkProbe()
+            Unit
+        }
+        val testingSheet = NetworkQualitySheet.showTesting(
+            this,
+            computer.name.orEmpty(),
+            onCancel = cancelProbe
+        )
+
+        testJob = uiScope.launch {
+            try {
+                val measurement = runInterruptible(Dispatchers.IO) {
+                    val http = NvHTTP(
+                        ServerHelper.getCurrentAddressFromComputer(computer),
+                        computer.httpsPort,
+                        binder.getUniqueId(),
+                        clientName,
+                        computer.serverCert,
+                        PlatformBinding.getCryptoProvider(this@PcView)
+                    )
+                    activeProbe.set(http)
+                    try {
+                        http.runNetworkProbe(testingSheet::updateProgress)
+                    } finally {
+                        activeProbe.compareAndSet(http, null)
+                    }
+                }
+                if (!isActive) return@launch
+
+                val result = StreamNetworkTestResult(
+                    bandwidthMbps = measurement.bandwidthMbps,
+                    responseLatencyMs = measurement.responseLatencyMs,
+                    responseJitterMs = measurement.responseJitterMs
+                )
+                val endpointIdentity = computer.activeAddress?.let { "${it.address}:${it.port}" }
+                StreamNetworkQualityStore.save(this@PcView, computer.uuid, endpointIdentity, result)
+                val recommendation = result.recommendationFor(networkDeviceDisplay())
+                pcGridAdapter.notifyDataSetChanged()
+                testingSheet.dismiss()
+                if (!isFinishing && !isDestroyed) {
+                    NetworkQualitySheet.showResult(
+                        this@PcView,
+                        computer.name.orEmpty(),
+                        result,
+                        recommendation,
+                        onSaveToSceneOne = {
+                            recommendation?.let(::saveNetworkRecommendationToSceneOne)
+                        },
+                        onContinue = {
+                            if (recommendation != null && applyNetworkRecommendation(recommendation)) {
+                                quickStartStream(computer, itemView = null, isSecondaryScreen = false)
+                            }
+                        }
+                    )
+                }
+            } catch (_: CancellationException) {
+                testingSheet.dismiss()
+            } catch (e: Exception) {
+                testingSheet.dismiss()
+                if (!isActive) return@launch
+                if (!isFinishing && !isDestroyed) {
+                    NetworkQualitySheet.showError(
+                        this@PcView,
+                        computer.name.orEmpty(),
+                        networkProbeErrorMessage(e)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun networkProbeErrorMessage(error: Exception): String {
+        if (error is FileNotFoundException) {
+            return getString(R.string.network_quality_unsupported)
+        }
+        if (error is NvHTTP.NetworkProbeException) {
+            return when (error.reason) {
+                "stream_active" -> getString(R.string.network_quality_stream_active)
+                "not_paired" -> getString(R.string.scut_not_paired)
+                "rate_limited" -> getString(R.string.network_quality_rate_limited)
+                "unsupported_version", "invalid_capabilities" -> getString(R.string.network_quality_unsupported)
+                else -> getString(R.string.network_quality_test_failed_detail)
+            }
+        }
+        return error.message?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.network_quality_test_failed_detail)
+    }
+
+    private fun recommendedPreferences(recommendation: StreamNetworkRecommendation): PreferenceConfiguration =
+        PreferenceConfiguration.readPreferences(this).apply {
+            width = recommendation.width
+            height = recommendation.height
+            isNativeResolution = recommendation.usesNativeResolution
+            isCustomResolution = !recommendation.usesNativeResolution &&
+                !PreferenceConfiguration.RESOLUTIONS.contains("${recommendation.width}x${recommendation.height}")
+            fps = recommendation.fps
+            bitrate = recommendation.bitrateKbps
+            enableAdaptiveBitrate = true
+        }
+
+    private fun saveNetworkRecommendationToSceneOne(recommendation: StreamNetworkRecommendation): Boolean {
+        persistRecommendedCustomResolution(recommendation)
+        return saveConfigurationToScene(
+            sceneNumber = 1,
+            preferences = recommendedPreferences(recommendation),
+            markActive = false
+        )
+    }
+
+    private fun applyNetworkRecommendation(recommendation: StreamNetworkRecommendation): Boolean {
+        val prefs = recommendedPreferences(recommendation)
+        persistRecommendedCustomResolution(recommendation)
+        if (!prefs.writeScenePreferences(this)) {
+            showToast(getString(R.string.config_save_failed))
+            return false
+        }
+
+        pcGridAdapter.updateLayoutWithPreferences(this, prefs)
+        showToast(getString(R.string.network_quality_recommendation_applied))
+        return true
+    }
+
+    private fun persistRecommendedCustomResolution(recommendation: StreamNetworkRecommendation) {
+        if (recommendation.usesNativeResolution) return
+        val resolution = "${recommendation.width}x${recommendation.height}"
+        if (PreferenceConfiguration.RESOLUTIONS.contains(resolution)) return
+
+        ResolutionValidator.parseResolution(resolution)?.let {
+            CustomResolutionsStore.add(this, it)
+        }
+    }
+
+    private fun networkDeviceDisplay(): StreamDeviceDisplay {
+        val targetDisplay = TargetDisplayResolver(this).resolve(
+            PreferenceConfiguration.isExternalDisplayEnabled(this)
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val modes = targetDisplay.supportedModes
+            val nativeMode = modes.maxByOrNull {
+                it.physicalWidth.toLong() * it.physicalHeight.toLong()
+            } ?: targetDisplay.mode
+            val maxRefreshRate = modes.asSequence()
+                .filter {
+                    it.physicalWidth == nativeMode.physicalWidth &&
+                        it.physicalHeight == nativeMode.physicalHeight
+                }
+                .maxOfOrNull { it.refreshRate }
+                ?: nativeMode.refreshRate
+            return StreamDeviceDisplay(
+                nativeWidth = nativeMode.physicalWidth,
+                nativeHeight = nativeMode.physicalHeight,
+                maxFps = maxRefreshRate.roundToInt()
+            )
+        }
+
+        val size = android.graphics.Point()
+        targetDisplay.getRealSize(size)
+        return StreamDeviceDisplay(size.x, size.y, targetDisplay.refreshRate.toInt())
     }
 
     /**
@@ -2285,7 +3188,14 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         if (app == null) {
             app = NvApp("app", details.runningGameId, false)
         }
-        ServerHelper.doStart(this, app, details, managerBinder!!, forceResumeCurrentSession = true)
+        val binder = managerBinder!!
+        uiScope.launch {
+            if (PairStatePreflight.isConfirmedNotPaired(details, binder, "Resume session")) {
+                showToast(getString(R.string.scut_not_paired))
+                return@launch
+            }
+            ServerHelper.doStart(this@PcView, app, details, binder, forceResumeCurrentSession = true)
+        }
     }
 
     private fun handleQuit(details: ComputerDetails) {
@@ -2299,11 +3209,14 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     }
 
     private fun handleSleep(details: ComputerDetails) {
-        if (managerBinder == null) {
+        val binder = managerBinder
+        if (binder == null) {
             showToast(getString(R.string.error_manager_not_running))
             return
         }
-        ServerHelper.pcSleep(this, details, managerBinder!!, null)
+        UiHelper.displaySleepConfirmationDialog(this, details, {
+            ServerHelper.pcSleep(this, details, binder, null)
+        }, null)
     }
 
     private fun handleIperf3Test(details: ComputerDetails) {
@@ -2386,7 +3299,7 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         setupEmptyAreaLongPress(listView)
 
         UiHelper.applyStatusBarPadding(listView)
-        registerForContextMenu(listView)
+        setupHostActionSheet(listView)
     }
 
     private fun setupListAnimation(listView: AbsListView) {
@@ -2415,13 +3328,13 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             val computer = pcGridAdapter.getItem(pos) as ComputerObject
 
             if (PcGridAdapter.isAddComputerCard(computer)) {
-                showAddComputerDialog()
+                showAddComputerActionSheet()
                 return@setOnItemClickListener
             }
 
             if (computer.details.state == ComputerDetails.State.UNKNOWN
                     || computer.details.state == ComputerDetails.State.OFFLINE) {
-                openContextMenu(view)
+                showHostActionSheet(computer.details)
             } else if (computer.details.pairState != PairState.PAIRED) {
                 doPair(computer.details)
             } else if (computer.details.hasMultipleLanAddresses()) {
@@ -2440,6 +3353,18 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
     private fun setupGridColumnWidth(view: View) {
         if (view is GridView) {
             calculateDynamicColumnWidth(view)
+        }
+    }
+
+    private fun setupHostActionSheet(listView: AbsListView) {
+        listView.setOnItemLongClickListener { _, _, position, _ ->
+            val computer = pcGridAdapter.getItem(position) as ComputerObject
+            if (PcGridAdapter.isAddComputerCard(computer)) {
+                false
+            } else {
+                showHostActionSheet(computer.details)
+                true
+            }
         }
     }
 
@@ -2480,83 +3405,6 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
         easyTierController?.showControlDialog()
     }
 
-    private fun showAboutDialog() {
-        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_about, null)
-
-        val versionText = dialogView.findViewById<TextView>(R.id.text_version)
-        versionText.text = getVersionInfo()
-
-        val appNameText = dialogView.findViewById<TextView>(R.id.text_app_name)
-        appNameText.text = getAppName()
-
-        val descriptionText = dialogView.findViewById<TextView>(R.id.text_description)
-        descriptionText.setText(R.string.about_dialog_description)
-
-        // PcView 继承自 Activity 而非 AppCompatActivity，在 Android 6 等设备上使用
-        // R.style.AppDialogStyle（父主题为 Theme.AppCompat.Light.Dialog.Alert）会触发
-        // "You need to use a Theme.AppCompat theme" 类崩溃，故此处使用系统 Material 对话框主题。
-        val dialogTheme = android.R.style.Theme_Material_Light_Dialog_Alert
-        val dialog = AlertDialog.Builder(this, dialogTheme)
-                .setView(dialogView)
-                .setPositiveButton(R.string.about_dialog_official_site) { _, _ ->
-                    startActivity(
-                        SunshineWebUiActivity.createIntent(
-                            this,
-                            OFFICIAL_SITE_URL,
-                            getString(R.string.about_dialog_official_site),
-                            null
-                        )
-                    )
-                }
-                .setNeutralButton(R.string.about_dialog_github) { _, _ -> openUrl("https://github.com/qiin2333/moonlight-vplus") }
-                .setNegativeButton(R.string.about_dialog_qq) { _, _ -> joinQQGroup("LlbLDIF_YolaM4HZyLx0xAXXo04ZmoBM") }
-                .create()
-        if (dialog.window != null) {
-            dialog.window?.setBackgroundDrawableResource(R.drawable.app_dialog_bg_cute)
-        }
-        dialog.show()
-    }
-
-    @SuppressLint("DefaultLocale")
-    private fun getVersionInfo(): String {
-        try {
-            val info = packageManager.getPackageInfo(packageName, 0)
-            return String.format("Version %s (Build %d)", info.versionName, PackageInfoCompat.getLongVersionCode(info))
-        } catch (e: PackageManager.NameNotFoundException) {
-            return "Version Unknown"
-        }
-    }
-
-    private fun getAppName(): String {
-        try {
-            val info = packageManager.getPackageInfo(packageName, 0)
-            if (info.applicationInfo != null) {
-                return info.applicationInfo?.loadLabel(packageManager).toString()
-            }
-        } catch (ignored: PackageManager.NameNotFoundException) {
-        }
-        return "Moonlight V+"
-    }
-
-    private fun openUrl(url: String) {
-        try {
-            val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-        } catch (ignored: Exception) {
-        }
-    }
-
-    fun joinQQGroup(key: String) {
-        try {
-            val intent = Intent()
-            intent.data =
-                "mqqopensdkapi://bizAgent/qm/qr?url=http%3A%2F%2Fqm.qq.com%2Fcgi-bin%2Fqm%2Fqr%3Ffrom%3Dapp%26p%3Dandroid%26jump_from%3Dwebapi%26k%3D$key".toUri()
-            startActivity(intent)
-        } catch (ignored: Exception) {
-        }
-    }
-
     // VPN Permission
 
     override fun requestVpnPermission() {
@@ -2578,12 +3426,29 @@ class PcView : Activity(), AdapterFragmentCallbacks, ShakeDetector.Listener, Eas
             return
         }
 
+        if (requestCode == ADD_COMPUTER_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                pendingAddedComputerUuid = data?.getStringExtra(
+                    AddComputerManually.EXTRA_ADDED_COMPUTER_UUID
+                )
+                showPendingAddedComputer()
+            }
+            return
+        }
+
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == VPN_PERMISSION_REQUEST_CODE && easyTierController != null) {
             easyTierController?.handleVpnPermissionResult(resultCode)
         } else if (requestCode == UpdateManager.INSTALL_PERMISSION_REQUEST_CODE) {
             UpdateManager.onInstallPermissionResult(this)
         }
+    }
+
+    private fun showPendingAddedComputer() {
+        val uuid = pendingAddedComputerUuid ?: return
+        val details = managerBinder?.getComputer(uuid) ?: return
+        pendingAddedComputerUuid = null
+        updateComputer(details)
     }
 
     // Utility

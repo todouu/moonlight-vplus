@@ -8,16 +8,13 @@ import android.content.res.Resources;
 import android.content.DialogInterface;
 import android.graphics.drawable.ColorDrawable;
 import android.preference.PreferenceManager;
-import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.VibrationAttributes;
-import android.os.VibrationEffect;
-import android.os.Vibrator;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -38,11 +35,13 @@ import android.widget.Toast;
 import com.limelight.Game;
 import com.limelight.LimeLog;
 import com.limelight.R;
-import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.advance_setting.ControllerManager;
+import com.limelight.binding.input.advance_setting.DirectConfigAction;
+import com.limelight.binding.input.advance_setting.DirectConfigSwitchState;
 import com.limelight.binding.input.advance_setting.PageDeviceController;
 import com.limelight.binding.input.advance_setting.config.PageConfigController;
 import com.limelight.binding.input.advance_setting.superpage.NumberSeekbar;
+import com.limelight.utils.AppDialogStyler;
 import com.limelight.binding.input.advance_setting.superpage.SuperPageLayout;
 import com.limelight.binding.input.advance_setting.superpage.SuperPagesController;
 
@@ -79,6 +78,7 @@ public class ElementController {
     private static final String SPECIAL_KEY_PAN_ZOOM_MODE = "PZM";
     private static final String SPECIAL_KEY_OPEN_GAME_MENU = "OGM";
     private static final String SPECIAL_KEY_EDIT_MODE_SWITCH = "EMS"; // 编辑模式
+    private static final String SPECIAL_KEY_MOUSE_MOVE_ONLY = "MMO"; // 仅鼠标移动
 
 
 
@@ -110,10 +110,10 @@ public class ElementController {
     private final Game game;
     private final Handler handler;
     private Toast currentToast;
-    private Vibrator deviceVibrator;
+    private final DirectConfigSwitchState directConfigSwitch = new DirectConfigSwitchState();
+    private Element dispatchingElement;
 
     private final ControllerManager controllerManager;
-    private final ControllerHandler controllerHandler;
     private final PageDeviceController pageDeviceController;
 
     private GamepadInputContext gamepadInputContext = new GamepadInputContext();
@@ -255,13 +255,11 @@ public class ElementController {
         this.context = context;
         this.game = (Game) context;
         this.controllerManager = controllerManager;
-        this.controllerHandler = game.getControllerHandler();
         this.pageDeviceController = controllerManager.getPageDeviceController();
         this.handler = new Handler(Looper.getMainLooper());
         this.pageEdit = (SuperPageLayout) LayoutInflater.from(context).inflate(R.layout.page_edit, null);
         this.editGridView = new EditGridView(context);
         this.bottomViewAmount = elementsLayout.getChildCount();
-        this.deviceVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
         this.alignmentSnapEnabled = preferences.getBoolean(PREF_CROWN_ALIGNMENT_SNAP_ENABLED, true);
         initEditPage();
@@ -273,8 +271,12 @@ public class ElementController {
             public void onClick(View v) {
                 changeMode(Mode.Normal);
                 controllerManager.pageSuperMenuController.open();
-                // 退出编辑模式后继续保留王冠返回菜单模式
-                ((Game) context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.CROWN_MODE);
+                // 一次性模式（NO_MENU）退出后回到游戏菜单，否则保持王冠模式
+                if (((Game) context).getCurrentBackKeyMenuMode() == Game.BackKeyMenuMode.NO_MENU) {
+                    ((Game) context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.GAME_MENU);
+                } else {
+                    ((Game) context).setcurrentBackKeyMenu(Game.BackKeyMenuMode.CROWN_MODE);
+                }
             }
         });
         pageEdit.findViewById(R.id.page_edit_auto_color_all).setOnClickListener(new View.OnClickListener() {
@@ -361,7 +363,7 @@ public class ElementController {
             @Override
             public void onClick(View v) {
                 DisplayMetrics displayMetrics = context.getResources().getDisplayMetrics();
-                ContentValues contentValues = SimplifyPerformance.getInitialInfo();
+                ContentValues contentValues = SimplifyPerformance.getInitialInfo(context);
                 contentValues.put(Element.COLUMN_INT_ELEMENT_CENTRAL_X, displayMetrics.widthPixels / 2);
                 contentValues.put(Element.COLUMN_INT_ELEMENT_CENTRAL_Y, 30);
                 addElement(contentValues);
@@ -370,7 +372,7 @@ public class ElementController {
         pageEdit.findViewById(R.id.page_edit_add_digital_combine_button).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                ContentValues contentValues = DigitalCombineButton.getInitialInfo();
+                ContentValues contentValues = DigitalCombineButton.getInitialInfo(context);
                 addElement(contentValues);
             }
         });
@@ -405,7 +407,7 @@ public class ElementController {
                 @Override
                 public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                     setDragEditEnabled(isChecked);
-                    String message = isChecked ? "长按移动按键" : "可直接拖动按键";
+                    String message = isChecked ? context.getString(R.string.crown_drag_hold) : context.getString(R.string.crown_drag_direct);
                     showToast(message);
                 }
             });
@@ -431,8 +433,37 @@ public class ElementController {
         return handler;
     }
 
+    void beginElementEvent(Element element, int action) {
+        dispatchingElement = element;
+        if (action == MotionEvent.ACTION_DOWN) directConfigSwitch.begin(element);
+    }
+
+    void endElementEvent(Element element, int action) {
+        dispatchingElement = null;
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            directConfigSwitch.finish(element, action == MotionEvent.ACTION_CANCEL);
+        }
+    }
+
+    public void cancelDirectConfigSwitch() {
+        directConfigSwitch.reset();
+    }
+
+    public void finishStreamTouch(int action) {
+        if (action == MotionEvent.ACTION_CANCEL) {
+            directConfigSwitch.reset();
+        } else if (action == MotionEvent.ACTION_UP) {
+            Long target = directConfigSwitch.takeCompletedTarget();
+            if (target != null && !game.isFinishing() && !game.isDestroyed()
+                    && mode == Mode.Normal && elementsLayout.isAttachedToWindow()) {
+                controllerManager.getPageConfigController().switchDirectlyToConfig(target);
+            }
+        }
+    }
+
 
     public void loadAllElement(Long configId) {
+        directConfigSwitch.reset();
         currentConfigId = configId;
         removeAllElementsOnScreen();
         elementIds = controllerManager.getSuperConfigDatabaseHelper().queryAllElementIds(configId);
@@ -483,6 +514,7 @@ public class ElementController {
     protected void deleteElement(Element element) {
         controllerManager.getSuperConfigDatabaseHelper().deleteElement(currentConfigId, element.elementId);
         if (elements.contains(element)) {
+            element.releaseLatchedInput();
             elementsLayout.removeView(element);
             elements.remove(element);
         }
@@ -490,6 +522,7 @@ public class ElementController {
 
     private void removeAllElementsOnScreen() {
         for (Element element : elements) {
+            element.releaseLatchedInput();
             elementsLayout.removeView(element);
         }
         elements.clear();
@@ -1230,6 +1263,24 @@ public class ElementController {
 
 
     public SendEventHandler getSendEventHandler(String key) {
+        if (key != null && key.startsWith(DirectConfigAction.PREFIX)) {
+            Long target = DirectConfigAction.parse(key);
+            if (target == null) return createEmptyHandler();
+            return new SendEventHandler() {
+                @Override
+                public void sendEvent(boolean down) {
+                    // A toggle button also emits false on a click. The touch transaction,
+                    // not the logical button level, confirms this one-shot action.
+                    if (dispatchingElement != null && target != currentConfigId
+                            && controllerManager.getSuperConfigDatabaseHelper().queryAllConfigIds().contains(target)) {
+                        directConfigSwitch.request(dispatchingElement, target);
+                    }
+                }
+
+                @Override
+                public void sendEvent(int analog1, int analog2) { }
+            };
+        }
         if (key.matches("k\\d+")) {
 
             int keyCode = Integer.parseInt(key.substring(1));
@@ -1440,21 +1491,21 @@ public class ElementController {
                             contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(true));
                             controllerManager.getTouchController().setTouchMode(false);
                             controllerManager.getTouchController().setEnhancedTouch(true);
-                            showToast("多点触控模式");
+                            showToast(context.getString(R.string.touch_mode_multitouch));
                         } else if (!touchMode && enhancedTouch) {
                             // 当前是多点触控模式 -> 切换到触控板模式
                             contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(true));
                             contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false));
                             controllerManager.getTouchController().setTouchMode(true);
                             controllerManager.getTouchController().setEnhancedTouch(false);
-                            showToast("触控板模式");
+                            showToast(context.getString(R.string.touch_mode_trackpad));
                         } else {
                             // 当前是触控板模式 -> 切换到经典鼠标模式
                             contentValues.put(PageConfigController.COLUMN_BOOLEAN_TOUCH_MODE, String.valueOf(false));
                             contentValues.put(PageConfigController.COLUMN_BOOLEAN_ENHANCED_TOUCH, String.valueOf(false));
                             controllerManager.getTouchController().setTouchMode(false);
                             controllerManager.getTouchController().setEnhancedTouch(false);
-                            showToast("经典鼠标模式");
+                            showToast(context.getString(R.string.touch_mode_classic_mouse));
                         }
 
                         // 保存到数据库中
@@ -1469,11 +1520,11 @@ public class ElementController {
                 }
             };
         } else if (key.equals(SPECIAL_KEY_CLASSIC_MOUSE_SWITCH)) {
-            return switchMouseMode(false, false, "经典鼠标模式");
+            return switchMouseMode(false, false, context.getString(R.string.touch_mode_classic_mouse));
         } else if (key.equals(SPECIAL_KEY_TRACKPAD_MODE)) {
-            return switchMouseMode(true, false, "触控板模式");
+            return switchMouseMode(true, false, context.getString(R.string.touch_mode_trackpad));
         } else if (key.equals(SPECIAL_KEY_MULTI_TOUCH_MODE)) {
-            return switchMouseMode(false, true, "多点触控模式");
+            return switchMouseMode(false, true, context.getString(R.string.touch_mode_multitouch));
         } else if (key.equals(SPECIAL_KEY_PC_KEYBOARD_SWITCH)) {
             return new SendEventHandler() {
                 @Override
@@ -1522,7 +1573,7 @@ public class ElementController {
 
                         // 弹出选择对话框
                         AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AppDialogStyle);
-                        builder.setTitle("选择配置")
+                        AlertDialog dialog = builder.setTitle(R.string.dialog_title_select_config)
                                 .setItems(configNames.toArray(new String[0]), new DialogInterface.OnClickListener() {
                                     @Override
                                     public void onClick(DialogInterface dialog, int which) {
@@ -1542,13 +1593,14 @@ public class ElementController {
                                         } catch (Exception ignored) {}
                                         loadAllElement(newConfigId);
 
-                                        showToast("已切换到: " + newName);
+                                        showToast(context.getString(R.string.toast_switched_to_config, newName));
                                     }
                                 })
                                 .setNegativeButton(R.string.game_menu_cancel, null)
                                 .show();
+                        AppDialogStyler.INSTANCE.applySystemChoiceList(dialog, context);
                     } catch (Exception e) {
-                        Toast.makeText(context, "无法加载配置列表", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(context, R.string.toast_config_list_load_failed, Toast.LENGTH_SHORT).show();
                     }
                 }
 
@@ -1561,7 +1613,9 @@ public class ElementController {
                 @Override
                 public void sendEvent(boolean down) {
                     if (down) {
-                        Toast.makeText(game, game.getisTouchOverrideEnabled()?"已关闭平移/缩放":"已开启平移/缩放", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(game,
+                                game.getisTouchOverrideEnabled() ? R.string.toast_pan_zoom_disabled_short : R.string.toast_pan_zoom_enabled_short,
+                                Toast.LENGTH_SHORT).show();
                         game.setisTouchOverrideEnabled(!game.getisTouchOverrideEnabled());
                     }
                 }
@@ -1613,9 +1667,29 @@ public class ElementController {
                         //做实际的设置
                         controllerManager.getTouchController().enableTouch(!mouseEnable);
                         if (!mouseEnable) {
-                            showToast("开启触控");
+                            showToast(context.getString(R.string.toast_touch_enabled_short));
                         } else {
-                            showToast("关闭触控");
+                            showToast(context.getString(R.string.toast_touch_disabled_short));
+                        }
+                    }
+                }
+
+                @Override
+                public void sendEvent(int analog1, int analog2) {
+
+                }
+            };
+        }
+        else if (key.equals(SPECIAL_KEY_MOUSE_MOVE_ONLY)) {
+            return new SendEventHandler() {
+                @Override
+                public void sendEvent(boolean down) {
+                    if (down) {
+                        game.toggleMouseMoveOnly();
+                        if (game.isMouseMoveOnlyEnabled()) {
+                            showToast(context.getString(R.string.layout_page_device_text_mmo_true_text));
+                        } else {
+                            showToast(context.getString(R.string.layout_page_device_text_mmo_false_text));
                         }
                     }
                 }
@@ -1706,7 +1780,7 @@ public class ElementController {
     }
 
     public void sendGamepadEvent() {
-        controllerHandler.reportOscState(
+        game.getControllerHandler().reportOscState(
                 gamepadInputContext.inputMap,
                 gamepadInputContext.leftStickX,
                 gamepadInputContext.leftStickY,
@@ -1719,7 +1793,7 @@ public class ElementController {
         Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                controllerHandler.reportOscState(
+                game.getControllerHandler().reportOscState(
                         gamepadInputContext.inputMap,
                         gamepadInputContext.leftStickX,
                         gamepadInputContext.leftStickY,
@@ -1742,6 +1816,9 @@ public class ElementController {
 
     public void setGameVibrator(boolean gameVibrator) {
         this.gameVibrator = gameVibrator;
+        if (!gameVibrator) {
+            game.getControllerHandler().submitLegacyDeviceRumble((short) 0, (short) 0);
+        }
     }
 
     public void buttonVibrator() {
@@ -1752,65 +1829,12 @@ public class ElementController {
 
     public void gameVibrator(short lowFreqMotor, short highFreqMotor) {
         if (gameVibrator) {
-            rumbleSingleVibrator(lowFreqMotor, highFreqMotor, 60000);
+            game.getControllerHandler().submitLegacyDeviceRumble(lowFreqMotor, highFreqMotor);
         }
     }
 
 
     public void rumbleSingleVibrator(short lowFreqMotor, short highFreqMotor, int vibratorTime) {
-        // Since we can only use a single amplitude value, compute the desired amplitude
-        // by taking 80% of the big motor and 33% of the small motor, then capping to 255.
-        // NB: This value is now 0-255 as required by VibrationEffect.
-        short lowFreqMotorMSB = (short) ((lowFreqMotor >> 8) & 0xFF);
-        short highFreqMotorMSB = (short) ((highFreqMotor >> 8) & 0xFF);
-        int simulatedAmplitude = Math.min(255, (int) ((lowFreqMotorMSB * 0.80) + (highFreqMotorMSB * 0.33)));
-
-        if (simulatedAmplitude == 0) {
-            // This case is easy - just cancel the current effect and get out.
-            // NB: We cannot simply check lowFreqMotor == highFreqMotor == 0
-            // because our simulatedAmplitude could be 0 even though our inputs
-            // are not (ex: lowFreqMotor == 0 && highFreqMotor == 1).
-            deviceVibrator.cancel();
-            return;
-        }
-
-        // Attempt to use amplitude-based control if we're on Oreo and the device
-        // supports amplitude-based vibration control.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (deviceVibrator.hasAmplitudeControl()) {
-                VibrationEffect effect = VibrationEffect.createOneShot(vibratorTime, simulatedAmplitude);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
-                            .setUsage(VibrationAttributes.USAGE_MEDIA)
-                            .build();
-                    deviceVibrator.vibrate(effect, vibrationAttributes);
-                } else {
-                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_GAME)
-                            .build();
-                    deviceVibrator.vibrate(effect, audioAttributes);
-                }
-                return;
-            }
-        }
-
-        // If we reach this point, we don't have amplitude controls available, so
-        // we must emulate it by PWMing the vibration. Ick.
-        long pwmPeriod = 20;
-        long onTime = (long) ((simulatedAmplitude / 255.0) * pwmPeriod);
-        long offTime = pwmPeriod - onTime;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
-                    .setUsage(VibrationAttributes.USAGE_MEDIA)
-                    .build();
-            deviceVibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, onTime, offTime}, 0), vibrationAttributes);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .build();
-            deviceVibrator.vibrate(new long[]{0, onTime, offTime}, 0, audioAttributes);
-        } else {
-            deviceVibrator.vibrate(new long[]{0, onTime, offTime}, 0);
-        }
+        game.getControllerHandler().playDeviceTouchHaptic(lowFreqMotor, highFreqMotor, vibratorTime);
     }
 }

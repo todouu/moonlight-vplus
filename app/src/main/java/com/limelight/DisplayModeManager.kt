@@ -2,10 +2,10 @@ package com.limelight
 
 import android.os.Build
 import android.view.Display
+import androidx.annotation.RequiresApi
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.utils.UiHelper
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * 显示模式管理器
@@ -14,7 +14,10 @@ import kotlin.math.roundToInt
  */
 object DisplayModeManager {
 
-    class DisplayModeResult(
+    /** Immutable display mode choice bound to the display whose mode ids it references. */
+    data class DisplayModeSelection(
+        val displayId: Int,
+        val selectedModeId: Int,
         val refreshRate: Float,
         val preferredModeId: Int,
         val useSetFrameRate: Boolean,
@@ -22,11 +25,11 @@ object DisplayModeManager {
     )
 
     fun isRefreshRateEqualMatch(refreshRate: Float, targetFps: Int): Boolean {
-        return refreshRate >= targetFps && refreshRate <= targetFps + 3
+        return DisplayModePolicy.isRefreshRateEqualMatch(refreshRate, targetFps)
     }
 
     fun isRefreshRateGoodMatch(refreshRate: Float, targetFps: Int): Boolean {
-        return refreshRate >= targetFps && refreshRate.roundToInt() % targetFps <= 3
+        return DisplayModePolicy.isRefreshRateGoodMatch(refreshRate, targetFps)
     }
 
     fun mayReduceRefreshRate(prefConfig: PreferenceConfiguration): Boolean {
@@ -35,8 +38,13 @@ object DisplayModeManager {
                 (prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED && prefConfig.reduceRefreshRate)
     }
 
-    fun shouldIgnoreInsetsForResolution(display: Display, width: Int, height: Int): Boolean {
-        if (!PreferenceConfiguration.isNativeResolution(width, height)) {
+    fun shouldIgnoreInsetsForResolution(
+        display: Display,
+        width: Int,
+        height: Int,
+        isNativeResolution: Boolean = PreferenceConfiguration.isNativeResolution(width, height)
+    ): Boolean {
+        if (!isNativeResolution) {
             return false
         }
 
@@ -53,76 +61,60 @@ object DisplayModeManager {
         return false
     }
 
-    fun selectBestDisplayMode(display: Display, prefConfig: PreferenceConfiguration): DisplayModeResult {
+    fun selectBestDisplayMode(
+        display: Display,
+        prefConfig: PreferenceConfiguration,
+        acceptableHdrTypes: IntArray = IntArray(0),
+    ): DisplayModeSelection {
         val displayRefreshRate: Float
+        var selectedModeId = -1
         var preferredModeId = -1
         var useSetFrameRate = false
         var aspectRatioMatch = false
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            var bestMode = display.mode
-            val isNativeResolutionStream = PreferenceConfiguration.isNativeResolution(prefConfig.width, prefConfig.height)
-            var refreshRateIsGood = isRefreshRateGoodMatch(bestMode.refreshRate, prefConfig.fps)
-            var refreshRateIsEqual = isRefreshRateEqualMatch(bestMode.refreshRate, prefConfig.fps)
-
-            LimeLog.info("Current display mode: ${bestMode.physicalWidth}x${bestMode.physicalHeight}x${bestMode.refreshRate}")
-
-            for (candidate in display.supportedModes) {
-                val refreshRateReduced = candidate.refreshRate < bestMode.refreshRate
-                val resolutionReduced = candidate.physicalWidth < bestMode.physicalWidth ||
-                        candidate.physicalHeight < bestMode.physicalHeight
-                val resolutionFitsStream = candidate.physicalWidth >= prefConfig.width &&
-                        candidate.physicalHeight >= prefConfig.height
-
-                LimeLog.info("Examining display mode: ${candidate.physicalWidth}x${candidate.physicalHeight}x${candidate.refreshRate}")
-
-                if (candidate.physicalWidth > 4096 && prefConfig.width <= 4096) {
-                    continue
-                }
-
-                if (prefConfig.width < 3840 && prefConfig.fps <= 60 && !isNativeResolutionStream) {
-                    if (display.mode.physicalWidth != candidate.physicalWidth ||
-                        display.mode.physicalHeight != candidate.physicalHeight
-                    ) {
-                        continue
-                    }
-                }
-
-                if (resolutionReduced && !(prefConfig.fps > 60 && resolutionFitsStream)) {
-                    continue
-                }
-
-                if (mayReduceRefreshRate(prefConfig) && refreshRateIsEqual && !isRefreshRateEqualMatch(candidate.refreshRate, prefConfig.fps)) {
-                    continue
-                } else if (refreshRateIsGood) {
-                    if (!isRefreshRateGoodMatch(candidate.refreshRate, prefConfig.fps)) {
-                        continue
-                    }
-
-                    if (mayReduceRefreshRate(prefConfig)) {
-                        if (candidate.refreshRate > bestMode.refreshRate) {
-                            continue
-                        }
-                    } else {
-                        if (refreshRateReduced) {
-                            continue
-                        }
-                    }
-                } else if (!isRefreshRateGoodMatch(candidate.refreshRate, prefConfig.fps)) {
-                    if (refreshRateReduced) {
-                        continue
-                    }
-                }
-
-                bestMode = candidate
-                refreshRateIsGood = isRefreshRateGoodMatch(candidate.refreshRate, prefConfig.fps)
-                refreshRateIsEqual = isRefreshRateEqualMatch(candidate.refreshRate, prefConfig.fps)
+            val supportedModes = display.supportedModes
+            val isNativeResolutionStream = prefConfig.usesNativeDisplayMode
+            val effectiveHdrTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                acceptableHdrTypes.toList()
+            } else {
+                emptyList()
             }
+            val currentMode = display.mode.toPolicyMode()
+            val policyResult = DisplayModePolicy.selectBestMode(
+                currentMode = currentMode,
+                supportedModes = supportedModes.map { it.toPolicyMode() },
+                request = DisplayModePolicy.Request(
+                    width = prefConfig.width,
+                    height = prefConfig.height,
+                    fps = prefConfig.fps,
+                    usesNativeDisplayMode = isNativeResolutionStream,
+                    mayReduceRefreshRate = mayReduceRefreshRate(prefConfig),
+                    acceptableHdrTypes = effectiveHdrTypes,
+                ),
+            )
+            if (effectiveHdrTypes.isNotEmpty() && !policyResult.hdrFilterApplied) {
+                LimeLog.warning("No display mode supports the requested HDR type; using normal mode selection")
+            } else if (effectiveHdrTypes.isNotEmpty() &&
+                policyResult.mode.hdrTypes.none(effectiveHdrTypes::contains)
+            ) {
+                LimeLog.warning("HDR-capable modes exist but none met the display mode constraints")
+            }
+
+            val bestMode = supportedModes.firstOrNull { it.modeId == policyResult.mode.id } ?: display.mode
+            LimeLog.info("Current display mode: ${display.mode.physicalWidth}x${display.mode.physicalHeight}x${display.mode.refreshRate}")
 
             LimeLog.info("Best display mode: ${bestMode.physicalWidth}x${bestMode.physicalHeight}x${bestMode.refreshRate}")
 
             if (display.mode.modeId != bestMode.modeId) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || UiHelper.isColorOS() ||
+                // setFrameRate() requests only a refresh rate, so Android may choose a different
+                // same-resolution mode whose HDR types don't match the mode we validated above.
+                // Pin the exact mode whenever mode-specific HDR capabilities influenced selection.
+                val requiresExactHdrMode =
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                        acceptableHdrTypes.isNotEmpty()
+                if (requiresExactHdrMode ||
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.S || UiHelper.isColorOS() ||
                     display.mode.physicalWidth != bestMode.physicalWidth ||
                     display.mode.physicalHeight != bestMode.physicalHeight
                 ) {
@@ -136,6 +128,7 @@ object DisplayModeManager {
             }
 
             displayRefreshRate = bestMode.refreshRate
+            selectedModeId = bestMode.modeId
         } else {
             @Suppress("DEPRECATION")
             var bestRefreshRate = display.refreshRate
@@ -170,6 +163,28 @@ object DisplayModeManager {
             }
         }
 
-        return DisplayModeResult(displayRefreshRate, preferredModeId, useSetFrameRate, aspectRatioMatch)
+        return DisplayModeSelection(
+            displayId = display.displayId,
+            selectedModeId = selectedModeId,
+            refreshRate = displayRefreshRate,
+            preferredModeId = preferredModeId,
+            useSetFrameRate = useSetFrameRate,
+            aspectRatioMatch = aspectRatioMatch
+        )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    private fun Display.Mode.toPolicyMode(): DisplayModePolicy.Mode {
+        return DisplayModePolicy.Mode(
+            id = modeId,
+            width = physicalWidth,
+            height = physicalHeight,
+            refreshRate = refreshRate,
+            hdrTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                supportedHdrTypes.toList()
+            } else {
+                emptyList()
+            },
+        )
     }
 }

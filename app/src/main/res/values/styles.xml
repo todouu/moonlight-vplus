@@ -13,6 +13,10 @@
             backward-compatibility can go here.
 
         -->
+        <!-- 强调色槽位默认值：品牌粉；首页背景 overlay 启用后跟随背景取色 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
     </style>
 
     <!-- Application theme. -->
@@ -27,6 +31,7 @@
         <item name="android:windowTranslucentStatus">false</item>
         <item name="android:windowTranslucentNavigation">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:buttonStyle">@style/AppButtonStyle</item>
     </style>
 
     <!--
@@ -52,6 +57,19 @@
         <!-- All customizations that are NOT specific to a particular API-level can go here. -->
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:buttonStyle">@style/AppButtonStyle</item>
+    </style>
+
+    <!-- Default filled button: regular actions use the shared 12dp radius. -->
+    <style name="AppButtonStyle" parent="android:Widget.Button">
+        <item name="android:background">@drawable/app_button_background</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:elevation">0dp</item>
     </style>
     
     <!-- 虚拟键盘基础样式 -->
@@ -118,8 +136,9 @@
     </style>
 
     <!-- 虚拟键盘对话框样式 - 全屏透明 -->
-    <style name="VirtualKeyboardDialogStyle" parent="Theme.AppCompat.Light.Dialog">
+    <style name="VirtualKeyboardDialogStyleBase" parent="Theme.AppCompat.Light.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowIsFloating">false</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowNoTitle">true</item>
@@ -132,12 +151,18 @@
         <item name="android:windowTranslucentStatus">false</item>
         <item name="android:windowTranslucentNavigation">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-        <item name="android:textColorPrimary">@color/theme_pink_primary</item>
+        <item name="android:textColorPrimary">?attr/appAccent</item>
         <item name="android:textColorSecondary">@color/game_menu_text_secondary</item>
-        <item name="android:colorAccent">@color/theme_pink_primary</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
         <item name="android:windowCloseOnTouchOutside">true</item>
         <item name="android:fitsSystemWindows">false</item>
+        <!-- 独立主题链（parent 是 AppCompat），需要自己声明强调色槽位默认值 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
     </style>
+
+    <style name="VirtualKeyboardDialogStyle" parent="VirtualKeyboardDialogStyleBase" />
 
     <!-- 虚拟键盘对话框动画 -->
     <style name="VirtualKeyboardDialogAnimation">
@@ -155,7 +180,23 @@
         <item name="android:windowTranslucentStatus">false</item>
         <item name="android:windowTranslucentNavigation">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
+        <item name="colorAccent">?attr/appAccent</item>
+        <item name="android:colorControlActivated">?attr/appAccent</item>
+        <item name="colorControlActivated">?attr/appAccent</item>
+        <item name="android:colorControlNormal">@color/ui_shell_text_secondary</item>
+        <item name="colorControlNormal">@color/ui_shell_text_secondary</item>
+        <item name="android:colorControlHighlight">?attr/appAccentSoft</item>
+        <item name="colorControlHighlight">?attr/appAccentSoft</item>
+        <item name="android:textColorPrimary">@color/settings_preference_title_text</item>
+        <item name="android:textColorSecondary">@color/settings_preference_summary_text</item>
         <item name="preferenceTheme">@style/MyPreferenceThemeOverlay</item>
+        <item name="android:buttonStyle">@style/AppButtonStyle</item>
+        <item name="buttonStyle">@style/AppButtonStyle</item>
+        <!-- 独立主题链（parent 是 AppCompat），需要自己声明强调色槽位默认值 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
     </style>
 
     <!-- 自定义 Preference 主题：紧凑左缩进 (无 icon 不预留空间) -->
@@ -170,21 +211,28 @@
     </style>
 
     <style name="MyPreferenceCompact" parent="@style/Preference.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
     </style>
     <style name="MyCheckBoxPreferenceCompact" parent="@style/Preference.CheckBoxPreference.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
+        <item name="widgetLayout">@layout/preference_widget_app_checkbox</item>
     </style>
     <style name="MySwitchPreferenceCompact" parent="@style/Preference.SwitchPreferenceCompat.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
     </style>
     <style name="MyDialogPreferenceCompact" parent="@style/Preference.DialogPreference.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
     </style>
     <style name="MyEditTextPreferenceCompact" parent="@style/Preference.DialogPreference.EditTextPreference.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
     </style>
     <style name="MyDropDownPreferenceCompact" parent="@style/Preference.DropDown.Material">
+        <item name="android:layout">@layout/preference_material_compact</item>
         <item name="iconSpaceReserved">false</item>
     </style>
 
@@ -192,19 +240,22 @@
         <item name="android:textViewStyle">@style/PreferenceTextWithShadow</item>
         <item name="android:titleTextAppearance">@style/PreferenceTitleWithShadow</item>
         <item name="android:subtitleTextAppearance">@style/PreferenceSummaryWithShadow</item>
+        <!-- AndroidX preference_material binds titles through textAppearanceListItem. -->
+        <item name="android:textAppearanceListItem">@style/PreferenceTitleWithShadow</item>
         <!-- Preference 的 summary 在 AOSP 默认布局里通常使用 ?android:attr/textAppearanceSmall -->
         <item name="android:textAppearanceSmall">@style/PreferenceSummaryWithShadow</item>
         <!-- 某些系统的 Preference 列表项 summary 会走 list item 的 secondary textAppearance -->
         <item name="android:textAppearanceListItemSecondary">@style/PreferenceSummaryWithShadow</item>
         <item name="android:textAppearanceListItemSmall">@style/PreferenceSummaryWithShadow</item>
-        <item name="android:colorAccent">@color/theme_pink_secondary</item>
-        <item name="android:textColorPrimary">@color/theme_pink_secondary</item>
-        <item name="android:listDivider">@color/theme_pink_secondary</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
+        <item name="android:textColorPrimary">@color/settings_preference_title_text</item>
+        <item name="android:textColorSecondary">@color/settings_preference_summary_text</item>
+        <item name="android:listDivider">@color/ui_shell_outline</item>
     </style>
 
     <style name="PreferenceTextWithShadow">
-        <item name="android:textColor">@android:color/white</item>
-        <item name="android:shadowColor">#88000000</item>
+        <item name="android:textColor">@color/settings_preference_title_text</item>
+        <item name="android:shadowColor">@color/ui_shell_text_shadow</item>
         <item name="android:shadowDx">1</item>
         <item name="android:shadowDy">1</item>
         <item name="android:shadowRadius">3</item>
@@ -212,33 +263,33 @@
     </style>
 
     <style name="PreferenceTitleWithShadow" parent="PreferenceTextWithShadow">
-        <item name="android:textSize">18sp</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">@color/settings_preference_title_text</item>
     </style>
 
     <style name="PreferenceSummaryWithShadow">
         <item name="android:textSize">11sp</item>
-        <item name="android:textColor">?android:attr/textColorSecondary</item>
-        <!-- 使用系统默认的次要文字颜色 -->
+        <item name="android:textColor">@color/settings_preference_summary_text</item>
     </style>
 
     <style name="PreferenceCategoryWithShadow" parent="PreferenceTextWithShadow">
         <item name="android:textSize">20sp</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:textColor">@color/theme_pink_secondary</item> 
-        <item name="android:shadowColor">#AA000000</item> <!-- 更强的阴影 -->
-        <item name="android:shadowRadius">5</item> <!-- 更大的阴影半径 -->
+        <item name="android:textColor">?attr/appAccent</item>
+        <item name="android:shadowColor">@color/ui_shell_text_shadow_strong</item>
+        <item name="android:shadowRadius">5</item>
     </style>
 
     <!-- GameMenu 对话框样式 -->
     <style name="GameMenuDialogStyle" parent="Theme.AppCompat.Light.Dialog.Alert">
-        <item name="android:windowBackground">@drawable/game_menu_dialog_bg</item>
-        <item name="android:windowMinWidthMajor">80%</item>
-        <item name="android:windowMinWidthMinor">95%</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowMinWidthMajor">100%</item>
+        <item name="android:windowMinWidthMinor">100%</item>
         <item name="android:windowIsFloating">true</item>
         <item name="android:windowAnimationStyle">@style/GameMenuDialogAnimation</item>
         <item name="android:windowSoftInputMode">adjustResize</item>
+        <item name="android:buttonStyle">@style/GameMenuButtonStyle</item>
     </style>
 
     <!-- GameMenu 按钮样式 -->
@@ -277,8 +328,14 @@
         <item name="android:windowExitAnimation">@anim/game_menu_dialog_exit</item>
     </style>
 
+    <!-- Low-end profile: preserve the slide but avoid an alpha animation. -->
+    <style name="GameMenuDialogAnimationLowEnd">
+        <item name="android:windowEnterAnimation">@anim/game_menu_dialog_enter_low_end</item>
+        <item name="android:windowExitAnimation">@anim/game_menu_dialog_exit_low_end</item>
+    </style>
+
     <!-- 通用弹窗样式 -->
-    <style name="AppDialogStyle" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="AppDialogStyle" parent="Theme.AppCompat.Dialog.Alert">
         <item name="android:windowBackground">@drawable/app_dialog_bg_cute</item>
         <item name="android:windowMinWidthMajor">60%</item>
         <item name="android:windowMinWidthMinor">80%</item>
@@ -288,10 +345,51 @@
         <!-- 专业标题颜色设置 -->
         <item name="android:textColorPrimary">@color/app_dialog_title_color</item>
         <item name="android:textColorSecondary">@color/app_dialog_subtitle_color</item>
-        <item name="android:colorAccent">@color/app_dialog_accent_color</item>
-        <item name="android:listDivider">@color/app_dialog_accent_color</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
+        <item name="colorAccent">?attr/appAccent</item>
+        <item name="android:colorControlActivated">?attr/appAccent</item>
+        <item name="colorControlActivated">?attr/appAccent</item>
+        <item name="android:colorControlNormal">@color/app_dialog_text_secondary</item>
+        <item name="colorControlNormal">@color/app_dialog_text_secondary</item>
+        <item name="android:colorControlHighlight">?attr/appAccentSoft</item>
+        <item name="colorControlHighlight">?attr/appAccentSoft</item>
+        <item name="android:listDivider">@color/app_dialog_outline</item>
         <!-- 标题样式 -->
         <item name="android:windowTitleStyle">@style/AppDialogTitleStyle</item>
+        <item name="android:buttonStyle">@style/AppDialogButtonStyle</item>
+        <item name="buttonStyle">@style/AppDialogButtonStyle</item>
+        <item name="buttonBarPositiveButtonStyle">@style/AppDialogButtonStyle</item>
+        <item name="buttonBarNegativeButtonStyle">@style/AppDialogButtonStyle</item>
+        <item name="buttonBarNeutralButtonStyle">@style/AppDialogButtonStyle</item>
+        <!-- 独立主题链（parent 是 AppCompat），需要自己声明强调色槽位默认值 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
+    </style>
+
+    <style name="AppActionSheetAnimation">
+        <item name="android:windowEnterAnimation">@anim/app_action_sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/app_action_sheet_exit</item>
+    </style>
+
+    <style name="AppTranslucentDialogStyle" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.42</item>
+    </style>
+
+    <style name="AppActionSheetStyle" parent="AppTranslucentDialogStyle">
+        <item name="android:windowAnimationStyle">@style/AppActionSheetAnimation</item>
+    </style>
+
+    <style name="AppComposeDialogStyle" parent="AppTranslucentDialogStyle">
+        <item name="android:windowAnimationStyle">@style/AppDialogAnimation</item>
+    </style>
+
+    <style name="GameMenuOpacityPopupStyle" parent="AppTranslucentDialogStyle">
+        <item name="android:backgroundDimEnabled">false</item>
     </style>
 
     <!-- 通用弹窗动画 -->
@@ -335,101 +433,55 @@
         <item name="android:windowMinWidthMinor">80%</item>
         <item name="android:windowIsFloating">true</item>
         <item name="android:windowAnimationStyle">@style/AppDialogAnimation</item>
-        <item name="android:textColorPrimary">@color/theme_pink_primary</item>
-        <item name="android:colorAccent">@color/theme_pink_primary</item>
-        <item name="android:progressTint">@color/theme_pink_primary</item>
-        <item name="android:indeterminateTint">@color/theme_pink_primary</item>
+        <item name="android:textColorPrimary">@color/app_dialog_text_primary</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
+        <item name="android:progressTint">?attr/appAccent</item>
+        <item name="android:indeterminateTint">?attr/appAccent</item>
         <item name="android:indeterminateDrawable">@drawable/app_progress_indeterminate</item>
+        <!-- 独立主题链（parent 是 AppCompat），需要自己声明强调色槽位默认值 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
     </style>
 
     <!-- 专门用于 iPerf3 对话框的样式 -->
     <style name="Iperf3DialogTheme" parent="Theme.AppCompat.Dialog.Alert">
         <!-- 对话框窗口背景色 (这是整个窗口的背景，包括标题和按钮区域) -->
-        <item name="android:background">#1C1C1E</item>
+        <item name="android:background">@color/app_dialog_surface</item>
+        <item name="android:windowBackground">@drawable/app_dialog_bg_cute</item>
         <!-- 标题文字样式 -->
         <item name="android:windowTitleStyle">@style/Iperf3DialogTitleText</item>
         <!-- 内容区域文字颜色 (虽然我们自定义了布局，但设置一下没坏处) -->
-        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColor">@color/app_dialog_text_primary</item>
         <!-- 标题文字颜色 (更通用的方式) -->
-        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorPrimary">@color/app_dialog_text_primary</item>
         <!-- 次要文字颜色 -->
-        <item name="android:textColorSecondary">#CCCCCC</item>
+        <item name="android:textColorSecondary">@color/app_dialog_text_secondary</item>
         <!-- 按钮样式 -->
         <item name="buttonBarPositiveButtonStyle">@style/Iperf3DialogButton</item>
         <item name="buttonBarNegativeButtonStyle">@style/Iperf3DialogButton</item>
         <item name="buttonBarNeutralButtonStyle">@style/Iperf3DialogButton</item>
         <!-- 按钮颜色 (这是控制按钮文字颜色的关键属性) -->
-        <item name="colorAccent">#007AFF</item>
+        <item name="android:colorAccent">?attr/appAccent</item>
+        <item name="colorAccent">?attr/appAccent</item>
+        <item name="android:colorControlActivated">?attr/appAccent</item>
+        <item name="colorControlActivated">?attr/appAccent</item>
+        <!-- 独立主题链（parent 是 AppCompat），需要自己声明强调色槽位默认值 -->
+        <item name="appAccent">@color/ui_shell_accent</item>
+        <item name="appAccentSoft">@color/ui_shell_accent_soft</item>
+        <item name="appAccentFocus">@color/ui_shell_accent_focus</item>
     </style>
     <!-- 自定义标题文字样式 -->
     <style name="Iperf3DialogTitleText" parent="@style/RtlOverlay.DialogWindowTitle.AppCompat">
-        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColor">@color/app_dialog_text_primary</item>
         <item name="android:textStyle">bold</item>
     </style>
     <!-- 自定义按钮样式 (可以进一步定制，比如背景等) -->
     <style name="Iperf3DialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
         <!-- 按钮文字颜色会继承自上面定义的 colorAccent -->
-        <item name="android:textColor">#007AFF</item>
+        <item name="android:textColor">?attr/appAccent</item>
         <item name="android:textAllCaps">true</item>
         <item name="android:textStyle">bold</item>
-    </style>
-
-    <!-- 专门用于 easyter 对话框的标题样式 -->
-    <style name="DialogRowLayout">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:orientation">horizontal</item>
-        <item name="android:paddingTop">4dp</item>
-        <item name="android:paddingBottom">4dp</item>
-    </style>
-
-    <style name="DialogRowLabel" parent="Widget.AppCompat.TextView">
-        <item name="android:layout_width">100dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-
-    <style name="DialogRowValue" parent="Widget.AppCompat.TextView">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_weight">1</item>
-        <item name="android:textIsSelectable">true</item>
-    </style>
-
-
-    <style name="ConfigLabel" parent="Widget.AppCompat.TextView">
-        <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">12dp</item>
-        <item name="android:textAppearance">?android:attr/textAppearanceSmall</item>
-        <item name="android:textStyle">bold</item>
-    </style>
-
-    <style name="ConfigEditText" parent="Widget.AppCompat.EditText">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-    </style>
-
-    <style name="ConfigEditText.MultiLine">
-        <item name="android:minLines">2</item>
-        <item name="android:gravity">top</item>
-        <item name="android:inputType">textMultiLine</item>
-    </style>
-
-    <style name="ConfigSubLabel" parent="Widget.AppCompat.TextView">
-        <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">16dp</item>
-        <item name="android:layout_marginBottom">4dp</item>
-        <item name="android:textAppearance">?android:attr/textAppearanceSmall</item>
-        <item name="android:textColor">?android:attr/textColorSecondary</item>
-    </style>
-
-    <style name="ConfigSwitch">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:paddingTop">8dp</item>
-        <item name="android:paddingBottom">8dp</item>
     </style>
 
 </resources>

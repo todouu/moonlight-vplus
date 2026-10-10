@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="crown_direct_config_action">Перейти к профилю</string>
+    <string name="crown_direct_config_target">Перейти к %1$s</string>
+    <string name="crown_direct_config_unavailable">Профиль недоступен (отключён)</string>
+    <string name="crown_direct_config_self">Текущий профиль; переход не нужен</string>
+    <string name="crown_direct_config_no_other">Других профилей нет</string>
+</resources>

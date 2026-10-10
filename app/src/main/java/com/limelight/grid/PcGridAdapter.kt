@@ -14,18 +14,24 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.preference.PreferenceManager
 
+import com.limelight.utils.AppTheme
+import com.limelight.utils.UiHelper
 import com.limelight.LimeLog
 import com.limelight.PcView
 import com.limelight.R
+import com.limelight.networkquality.StreamNetworkQualityStore
+import com.limelight.networkquality.supportsNetworkQualityProbe
 import com.limelight.nvstream.http.ComputerDetails
 import com.limelight.nvstream.http.NvApp
 import com.limelight.nvstream.http.NvHTTP
 import com.limelight.nvstream.http.PairingManager
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.utils.CacheHelper
+import com.limelight.utils.HostCacheKey
 
 import java.io.StringReader
 import java.lang.ref.WeakReference
@@ -225,18 +231,55 @@ class PcGridAdapter(
         val overlayView = view.findViewById<ImageView>(R.id.grid_overlay)
         val txtView = view.findViewById<TextView>(R.id.grid_text)
         val spinnerView = view.findViewById<View>(R.id.grid_spinner)
+        val networkQualityView = view.findViewById<LinearLayout>(R.id.grid_network_quality)
+        val networkQualityText = view.findViewById<TextView>(R.id.grid_network_quality_text)
 
         val computer = filtered[i]
         // 把 UUID 挂到 view tag 上，PcView FLIP 重排动画需要从可见 view 反查"当前显示的 PC"
         // —— 不能依赖 adapter.getItem(pos) 因为 itemList 在 sortList() 后已同步重排
         view.setTag(R.id.grid_text, computer.details?.uuid)
         populateView(view, imgView, spinnerView, txtView, overlayView, computer)
+        updateNetworkQuality(networkQualityView, networkQualityText, computer)
 
         if (imgView != null) {
             setupImageTouchListener(imgView, view, computer)
         }
 
         return view
+    }
+
+    private fun updateNetworkQuality(
+        container: LinearLayout?,
+        textView: TextView?,
+        computer: PcView.ComputerObject
+    ) {
+        if (container == null || textView == null || isAddComputerCard(computer)) {
+            container?.visibility = View.GONE
+            return
+        }
+
+        val details = computer.details
+        val supportsProbe = details.state == ComputerDetails.State.ONLINE &&
+                details.pairState == PairingManager.PairState.PAIRED &&
+                details.supportsNetworkQualityProbe()
+        if (!supportsProbe) {
+            container.visibility = View.GONE
+            return
+        }
+
+        val endpointIdentity = details.activeAddress?.let { "${it.address}:${it.port}" }
+        val result = StreamNetworkQualityStore.load(context, details.uuid, endpointIdentity)
+        if (result == null) {
+            container.visibility = View.GONE
+            return
+        }
+
+        textView.text = context.getString(
+            R.string.network_quality_card_summary,
+            result.responseLatencyMs,
+            result.bandwidthMbps
+        )
+        container.visibility = View.VISIBLE
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -267,29 +310,36 @@ class PcGridAdapter(
 
     @SuppressLint("SetTextI18n")
     override fun populateView(parentView: View, imgView: ImageView?, spinnerView: View?, txtView: TextView?, overlayView: ImageView?, obj: PcView.ComputerObject) {
+        val accentBucket = AppTheme.activeBucket(context)
+        parentView.findViewById<ImageView>(R.id.grid_network_quality_icon)?.imageTintList =
+            android.content.res.ColorStateList.valueOf(UiHelper.accentColor(context))
+        // 装饰层按色相桶换装（光晕/图标底；表面渐变在 populate* 里设置）
+        parentView.findViewById<View>(R.id.pcIconGlow)?.background = PcCardDecor.glow(context, accentBucket)
+        parentView.findViewById<View>(R.id.pcIconBg)?.background = PcCardDecor.iconBg(context, accentBucket)
+
         if (isAddComputerCard(obj)) {
-            populateAddComputerCard(parentView, imgView!!, spinnerView!!, txtView!!, overlayView!!)
+            populateAddComputerCard(parentView, imgView!!, spinnerView!!, txtView!!, overlayView!!, accentBucket)
             return
         }
 
-        populateComputerCard(parentView, imgView!!, spinnerView!!, txtView!!, overlayView!!, obj.details)
+        populateComputerCard(parentView, imgView!!, spinnerView!!, txtView!!, overlayView!!, obj.details, accentBucket)
     }
 
-    private fun populateAddComputerCard(parentView: View, imgView: ImageView, spinnerView: View, txtView: TextView, overlayView: ImageView) {
+    private fun populateAddComputerCard(parentView: View, imgView: ImageView, spinnerView: View, txtView: TextView, overlayView: ImageView, accentBucket: Int) {
         imgView.setImageResource(R.drawable.ic_add)
         imgView.scaleType = ImageView.ScaleType.FIT_CENTER
         imgView.alpha = 0.7f
 
-        parentView.setBackgroundResource(R.drawable.pc_item_selector)
+        parentView.background = PcCardDecor.selector(context, accentBucket)
         spinnerView.visibility = View.INVISIBLE
         overlayView.visibility = View.GONE
 
         txtView.text = context.getString(R.string.title_add_pc)
         txtView.alpha = 0.7f
-        txtView.setTextColor(ONLINE_TEXT_COLOR)
+        txtView.setTextColor(PcCardDecor.textColor(context))
     }
 
-    private fun populateComputerCard(parentView: View, imgView: ImageView, spinnerView: View, txtView: TextView, overlayView: ImageView, details: ComputerDetails) {
+    private fun populateComputerCard(parentView: View, imgView: ImageView, spinnerView: View, txtView: TextView, overlayView: ImageView, details: ComputerDetails, accentBucket: Int) {
         val isOnline = details.state == ComputerDetails.State.ONLINE
         val isUnknown = details.state == ComputerDetails.State.UNKNOWN
         val isOffline = details.state == ComputerDetails.State.OFFLINE
@@ -301,12 +351,11 @@ class PcGridAdapter(
         }
         imgView.alpha = if (isOnline) ONLINE_ALPHA else OFFLINE_ALPHA
 
-        parentView.setBackgroundResource(
-            if (isOnline && details.hasMultipleAddresses())
-                R.drawable.pc_item_multiple_addresses_selector
-            else
-                R.drawable.pc_item_selector
-        )
+        parentView.background = if (isOnline && details.hasMultipleAddresses()) {
+            PcCardDecor.multiSelector(context, accentBucket)
+        } else {
+            PcCardDecor.selector(context, accentBucket)
+        }
 
         val isLoadingBoxArt = details.uuid != null && details.uuid in loadingUuids
         updateSpinner(spinnerView as ImageView, isUnknown || isLoadingBoxArt)
@@ -317,7 +366,7 @@ class PcGridAdapter(
         }
         txtView.text = displayName
         txtView.alpha = if (isOffline) 0.5f else 1.0f
-        txtView.setTextColor(if (isOffline) OFFLINE_TEXT_COLOR else ONLINE_TEXT_COLOR)
+        txtView.setTextColor(PcCardDecor.textColor(context, disabled = isOffline))
 
         updateOverlay(overlayView, details, isOnline, isOffline)
     }
@@ -362,8 +411,6 @@ class PcGridAdapter(
         private const val TARGET_SIZE = 128
         private const val ONLINE_ALPHA = 0.95f
         private const val OFFLINE_ALPHA = 0.45f
-        private const val ONLINE_TEXT_COLOR = 0xFF1C1C1E.toInt()
-        private const val OFFLINE_TEXT_COLOR = 0xFF8E8E93.toInt()
 
         fun isAddComputerCard(obj: PcView.ComputerObject?): Boolean {
             return obj != null && ADD_COMPUTER_UUID == obj.details.uuid
@@ -384,10 +431,11 @@ class PcGridAdapter(
 
         private fun loadBoxArtFromDisk(ctx: Context?, uuid: String?, useAdaptiveSampleSize: Boolean): Bitmap? {
             if (ctx == null || uuid == null) return null
+            val cacheKey = HostCacheKey.fromUuid(uuid) ?: return null
 
             try {
                 val rawAppList = CacheHelper.readInputStreamToString(
-                    CacheHelper.openCacheFileForInput(ctx.cacheDir, "applist", uuid)
+                    CacheHelper.openCacheFileForInput(ctx.cacheDir, "applist", cacheKey)
                 )
 
                 if (rawAppList.isEmpty()) return null
@@ -397,7 +445,7 @@ class PcGridAdapter(
 
                 val cacheDir = ctx.cacheDir
                 for (app in appList) {
-                    val boxArtFile = CacheHelper.openPath(false, cacheDir, "boxart", uuid, "${app.appId}.png")
+                    val boxArtFile = CacheHelper.openPath(false, cacheDir, "boxart", cacheKey, "${app.appId}.png")
                     if (!boxArtFile.exists() || boxArtFile.length() == 0L) continue
 
                     val options = BitmapFactory.Options()

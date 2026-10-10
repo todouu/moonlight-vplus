@@ -55,6 +55,7 @@ object ServerHelper {
         managerBinder: ComputerManagerService.ComputerManagerBinder,
         lastSettings: PreferenceConfiguration? = null,
         screenCombinationMode: Int = -1,
+        useVdd: Boolean? = null,
         forceResumeCurrentSession: Boolean = false
     ): Intent {
         return Intent(parent, Game::class.java).apply {
@@ -68,7 +69,7 @@ object ServerHelper {
             putExtra(Game.EXTRA_PC_UUID, computer.uuid)
             putExtra(Game.EXTRA_PC_NAME, computer.name)
             putExtra(Game.EXTRA_PAIR_NAME, computer.getPairName(parent))
-            putExtra(Game.EXTRA_PC_USEVDD, computer.useVdd)
+            useVdd?.let { putExtra(Game.EXTRA_PC_USEVDD, it) }
             app.cmdList?.let { putExtra(Game.EXTRA_APP_CMD, it.toString()) }
             try {
                 computer.serverCert?.let { putExtra(Game.EXTRA_SERVER_CERT, it.encoded) }
@@ -138,6 +139,12 @@ object ServerHelper {
         managerBinder: ComputerManagerService.ComputerManagerBinder,
         onComplete: Runnable?
     ) {
+        Toast.makeText(
+            parent,
+            parent.getString(R.string.pcview_menu_sleep_sending, computer.name),
+            Toast.LENGTH_SHORT
+        ).show()
+
         Thread {
             var message: String
             try {
@@ -159,7 +166,8 @@ object ServerHelper {
             } catch (e: Exception) {
                 when (e) {
                     is IOException, is XmlPullParserException -> {
-                        message = e.message ?: ""
+                        message = e.message?.takeIf { it.isNotBlank() }
+                            ?: parent.getString(R.string.pcview_menu_sleep_fail)
                         e.printStackTrace()
                     }
                     is InterruptedException -> {
@@ -203,9 +211,7 @@ object ServerHelper {
                 }
             } catch (e: HostHttpResponseException) {
                 message = if (e.getErrorCode() == 599) {
-                    "This session wasn't started by this device," +
-                            " so it cannot be quit. End streaming on the original " +
-                            "device or the PC itself. (Error code: ${e.getErrorCode()})"
+                    parent.getString(R.string.connection_foreign_session_quit, e.getErrorCode())
                 } else {
                     e.message
                 }

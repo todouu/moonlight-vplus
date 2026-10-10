@@ -3,11 +3,11 @@
 
   # Moonlight V+
 
-  [![GitHub Release](https://img.shields.io/github/v/release/qiin2333/moonlight-android?label=latest&style=flat-square)](https://github.com/qiin2333/moonlight-android/releases/latest)
+  [![GitHub Release](https://img.shields.io/github/v/release/qiin2333/moonlight-vplus?label=latest&style=flat-square)](https://github.com/qiin2333/moonlight-vplus/releases/latest)
   [![Android](https://img.shields.io/badge/Android-5.0+-34A853?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/about/versions)
   [![License](https://img.shields.io/badge/license-GPL%20v3-EF9421?style=flat-square)](LICENSE.txt)
-  [![GitHub Stars](https://img.shields.io/github/stars/qiin2333/moonlight-android?style=flat-square)](https://github.com/qiin2333/moonlight-android/stargazers)
-  [![Downloads](https://img.shields.io/github/downloads/qiin2333/moonlight-android/total?style=flat-square&color=blue)](https://github.com/qiin2333/moonlight-android/releases)
+  [![GitHub Stars](https://img.shields.io/github/stars/qiin2333/moonlight-vplus?style=flat-square)](https://github.com/qiin2333/moonlight-vplus/stargazers)
+  [![Downloads](https://img.shields.io/github/downloads/qiin2333/moonlight-vplus/total?style=flat-square&color=blue)](https://github.com/qiin2333/moonlight-vplus/releases)
 
   **An enhanced Android game streaming client based on [Moonlight](https://github.com/moonlight-stream/moonlight-android)**
 
@@ -57,41 +57,87 @@ Moonlight V+ extends [moonlight-android](https://github.com/moonlight-stream/moo
 | | Audio vibration | Real-time bass energy drives haptic feedback (device / gamepad / both) | `12.7.0` |
 | | | Three scene modes: Game (sustained rumble), Music (beat pulses), Auto | |
 
+To choose a feature by what you want to do, see the [Moonlight V+ feature guide](docs/VPLUS_FEATURES_EN.md): Crown profiles, Foundation Sunshine actions, displays, haptics, and frame generation.
+
 ## Getting Started
 
 ### Requirements
 
 - Android 5.0+ (API 22)
 - Device with HEVC / AV1 hardware decoding (recommended)
-- 5 GHz Wi-Fi or wired LAN connection
+- 5 GHz / 6 GHz Wi-Fi or wired LAN connection
+- A host PC running [Foundation Sunshine](https://github.com/AlkaidLab/foundation-sunshine) (recommended). Standard streaming also works with [Sunshine](https://github.com/LizardByte/Sunshine); legacy NVIDIA GameStream may work on existing setups.
 
 ### Installation
 
-Download the latest APK from [Releases](https://github.com/qiin2333/moonlight-android/releases/latest), install it, and follow the in-app guide to pair with your host.
+Download the latest APK from [Releases](https://github.com/qiin2333/moonlight-vplus/releases/latest), install it, and pair it with your host.
+
+For the first stream, start with a conservative profile:
+
+- 1080p, 60 FPS
+- H.264 or Auto codec
+- HDR off
+- 10-20 Mbps bitrate
+- Host PC connected by Ethernet when possible
+
+After that is stable, raise resolution, frame rate, bitrate, HEVC / AV1, HDR, and V+ enhanced options one at a time.
+
+### Host Choice
+
+- **Foundation Sunshine (recommended)**: the companion host for Moonlight V+, providing standard streaming and supported V+ extensions such as microphone forwarding and host display control. Feature availability depends on the host version.
+- **Sunshine**: supports standard Moonlight streaming; some V+ extensions need Foundation Sunshine.
+- **GeForce Experience / NVIDIA GameStream**: a legacy compatibility path for existing setups. Choose Foundation Sunshine for a new installation.
+
+### If Something Goes Wrong
+
+- Black screen or decoder crash: try H.264, turn HDR off, lower resolution / FPS, then reconnect.
+- Stutter or "slow connection": lower bitrate first, then check Wi-Fi quality, packet loss, and latency variance in the performance overlay.
+- Android TV / TV box issues: test 1080p60 H.264 before trying HEVC, AV1, HDR, or high refresh rates.
+- Internet streaming issues: verify local LAN streaming works before configuring port forwarding, UPnP, EasyTier, Tailscale, or other VPN paths.
+
+Useful references:
+
+- [Moonlight V+ Q&A](FAQ_EN.md)
+- [Moonlight setup guide](https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide)
+- [Moonlight troubleshooting guide](https://github.com/moonlight-stream/moonlight-docs/wiki/Troubleshooting)
+- [V+ feature guide](docs/USER_GUIDE_EN.md)
+- [First connection with Foundation Sunshine](docs/GETTING_STARTED_EN.md)
+- [Foundation Sunshine compatibility matrix](docs/COMPATIBILITY_EN.md)
+- [Backups and migration](docs/BACKUP_AND_MIGRATION_EN.md)
 
 ### Building from Source
 
+Install JDK 17, Android SDK 36, Build Tools 36.0.0, NDK 28.2.13676358, and CMake 3.22.1 first. The build also needs two Git submodules and a separate [audio-haptics SDK](https://github.com/AlkaidLab/moonlight-audio-haptics) checkout; see [CI](.github/workflows/android-ci.yml) for the pinned revision.
+
 ```bash
-git clone https://github.com/qiin2333/moonlight-android.git
-cd moonlight-android
-./gradlew assembleRelease
+git clone --recurse-submodules https://github.com/qiin2333/moonlight-vplus.git
+cd moonlight-vplus
+git clone https://github.com/AlkaidLab/moonlight-audio-haptics.git ../moonlight-audio-haptics
+git -C ../moonlight-audio-haptics checkout b3f97c3bb7500ea7b1985aea568e5c7b40308d3b
+./gradlew :app:assembleNonRootDebug -PaudioHapticsSdkDir="$PWD/../moonlight-audio-haptics"
 ```
+
+On Windows PowerShell, use `.\gradlew.bat :app:assembleNonRootDebug -PaudioHapticsSdkDir="$PWD/../moonlight-audio-haptics"` for the last line. Release distribution also requires signing. A local build can omit `app/google-services.json`, but Firebase reporting will not work without it.
 
 ## Foundation Sunshine Enhanced Features
 
-The following features require **[Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine)** on the host side:
+The following features require **[Foundation Sunshine](https://github.com/AlkaidLab/foundation-sunshine)** on the host side:
 
-| Feature | Description | Min Version |
+| Feature | Description | Host requirement |
 |---------|-------------|-------------|
-| Mic redirect | Low-latency microphone audio forwarding to the host | 2025.0720+ |
+| Mic redirect | Microphone audio forwarding to the host | Foundation Sunshine 2025.0720+ |
 | Live bitrate adjustment | Dynamically tune video bitrate during a session | — |
 | Super menu commands | Send advanced control commands to the host from the in-stream menu | — |
 | App desktop polish | Sync host app icons; custom sorting and grouping | — |
 | Host auto-optimization | Auto-negotiate resolution/DPI, touch keyboard, and state memory | — |
 
+Features without a listed minimum still need release-build verification. See the [compatibility matrix](docs/COMPATIBILITY_EN.md) for version evidence and how to update it.
+
 ## Contributing
 
 Issues and Pull Requests are welcome!
+
+Before reporting a problem, check the [Q&A](FAQ_EN.md). See the [privacy notice](PRIVACY_POLICY_EN.md) for analytics and crash-report handling.
 
 ### Contributors
 

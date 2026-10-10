@@ -15,16 +15,109 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 
+import com.limelight.LimeLog
+import com.limelight.binding.input.driver.AbstractController
+import com.limelight.binding.input.driver.DualSenseAdaptiveTriggerEffect
+import com.limelight.binding.input.haptics.SingleMotorRumbleFold
 import com.limelight.nvstream.input.ControllerPacket
 import com.limelight.nvstream.jni.MoonBridge
 
 import org.cgutman.shieldcontrollerextensions.SceChargingState
 import org.cgutman.shieldcontrollerextensions.SceConnectionType
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 振动、LED 与电池状态管理器
  */
 class ControllerRumbleManager(private val handler: ControllerHandler) {
+
+    private data class BaseRumble(val lowFrequency: Short, val highFrequency: Short)
+    private data class TriggerRumble(val left: Short, val right: Short)
+    private data class AdaptiveTriggers(
+        val eventFlags: Byte,
+        val typeLeft: Byte,
+        val typeRight: Byte,
+        val left: ByteArray,
+        val right: ByteArray
+    )
+
+    private inner class UsbRumbleOutput(val device: AbstractController) {
+        private val pendingBase = AtomicReference<BaseRumble?>()
+        private val pendingTriggers = AtomicReference<TriggerRumble?>()
+        private val pendingAdaptiveTriggers = AtomicReference<AdaptiveTriggers?>()
+        @Volatile
+        private var closed = false
+        private val runnable = Runnable {
+            if (closed) return@Runnable
+            pendingBase.getAndSet(null)?.let { rumble ->
+                try {
+                    device.rumble(rumble.lowFrequency, rumble.highFrequency)
+                } catch (e: Exception) {
+                    LimeLog.warning("Controller rumble failed: ${e.message}")
+                }
+            }
+            pendingTriggers.getAndSet(null)?.let { rumble ->
+                try {
+                    device.rumbleTriggers(rumble.left, rumble.right)
+                } catch (e: Exception) {
+                    LimeLog.warning("Controller trigger rumble failed: ${e.message}")
+                }
+            }
+            pendingAdaptiveTriggers.getAndSet(null)?.let { triggers ->
+                try {
+                    device.setAdaptiveTriggers(
+                        triggers.eventFlags,
+                        triggers.typeLeft,
+                        triggers.typeRight,
+                        triggers.left,
+                        triggers.right
+                    )
+                } catch (e: Exception) {
+                    LimeLog.warning("Controller adaptive triggers failed: ${e.message}")
+                }
+            }
+        }
+
+        fun submitBase(rumble: BaseRumble) {
+            if (closed) return
+            pendingBase.set(rumble)
+            schedule()
+        }
+
+        fun submitTriggers(rumble: TriggerRumble) {
+            if (closed) return
+            pendingTriggers.set(rumble)
+            schedule()
+        }
+
+        fun submitAdaptiveTriggers(triggers: AdaptiveTriggers) {
+            if (closed) return
+            pendingAdaptiveTriggers.set(triggers)
+            schedule()
+        }
+
+        private fun schedule() {
+            if (closed) return
+            // A stable runnable lets the worker keep only this device's latest state.
+            handler.backgroundThreadHandler.removeCallbacks(runnable)
+            if (!handler.backgroundThreadHandler.post(runnable)) {
+                pendingBase.set(null)
+                pendingTriggers.set(null)
+                pendingAdaptiveTriggers.set(null)
+            }
+        }
+
+        fun close() {
+            closed = true
+            pendingBase.set(null)
+            pendingTriggers.set(null)
+            pendingAdaptiveTriggers.set(null)
+            handler.backgroundThreadHandler.removeCallbacks(runnable)
+        }
+    }
+
+    private val usbRumbleOutputsLock = Any()
+    private val usbRumbleOutputs = mutableMapOf<Int, UsbRumbleOutput>()
 
     @TargetApi(31)
     fun hasDualAmplitudeControlledRumbleVibrators(vm: VibratorManager): Boolean {
@@ -141,15 +234,26 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
         vm.vibrate(combo.combine(), vibrationAttributes.build())
     }
 
-    fun rumbleSingleVibrator(vibrator: Vibrator, lowFreqMotor: Short, highFreqMotor: Short) {
-        // Since we can only use a single amplitude value, compute the desired amplitude
-        // by taking 80% of the big motor and 33% of the small motor, then capping to 255.
+    fun rumbleSingleVibrator(
+        vibrator: Vibrator = handler.deviceVibrator,
+        lowFreqMotor: Short,
+        highFreqMotor: Short,
+        durationMs: Long = 60_000L
+    ) {
+        // Since we can only use a single amplitude value, compute the desired amplitude with the
+        // shared single-motor fold (the one place that owns those weights).
         // NB: This value is now 0-255 as required by VibrationEffect.
-        val lowFreqMotorMSB = (lowFreqMotor.toInt() shr 8) and 0xFF
-        val highFreqMotorMSB = (highFreqMotor.toInt() shr 8) and 0xFF
-        val simulatedAmplitude = Math.min(255, ((lowFreqMotorMSB * 0.80) + (highFreqMotorMSB * 0.33)).toInt())
+        val simulatedAmplitude = SingleMotorRumbleFold.amplitude(lowFreqMotor, highFreqMotor)
+        vibrateSingleAmplitude(vibrator, simulatedAmplitude, durationMs)
+    }
 
-        if (simulatedAmplitude == 0) {
+    fun vibrateSingleAmplitude(
+        vibrator: Vibrator = handler.deviceVibrator,
+        amplitude: Int,
+        durationMs: Long = 60_000L
+    ) {
+        val safeAmplitude = amplitude.coerceIn(0, 255)
+        if (safeAmplitude == 0) {
             // This case is easy - just cancel the current effect and get out.
             // NB: We cannot simply check lowFreqMotor == highFreqMotor == 0
             // because our simulatedAmplitude could be 0 even though our inputs
@@ -162,7 +266,7 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
         // supports amplitude-based vibration control.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (vibrator.hasAmplitudeControl()) {
-                val effect = VibrationEffect.createOneShot(60000, simulatedAmplitude)
+                val effect = VibrationEffect.createOneShot(durationMs, safeAmplitude)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     val vibrationAttributes = VibrationAttributes.Builder()
                         .setUsage(VibrationAttributes.USAGE_MEDIA)
@@ -180,27 +284,74 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
 
         // If we reach this point, we don't have amplitude controls available, so
         // we must emulate it by PWMing the vibration. Ick.
-        val pwmPeriod: Long = 20
-        val onTime = ((simulatedAmplitude / 255.0) * pwmPeriod).toLong()
-        val offTime = pwmPeriod - onTime
+        val timings = finitePwmWaveform(safeAmplitude, durationMs)
+        vibratePwmWaveform(vibrator, timings)
+    }
+
+    private fun finitePwmWaveform(amplitude: Int, durationMs: Long): LongArray {
+        val onTime = ((amplitude / 255.0) * PWM_PERIOD_MS).toLong().coerceAtLeast(1L)
+        val offTime = PWM_PERIOD_MS - onTime
+        val cycleCount = ((durationMs + PWM_PERIOD_MS - 1L) / PWM_PERIOD_MS)
+            .toInt()
+            .coerceAtLeast(1)
+        val timings = LongArray(cycleCount * 2 + 1)
+        var remainingMs = durationMs
+        for (cycle in 0 until cycleCount) {
+            val cycleOnTime = minOf(onTime, remainingMs)
+            remainingMs -= cycleOnTime
+            val cycleOffTime = minOf(offTime, remainingMs)
+            remainingMs -= cycleOffTime
+            timings[cycle * 2 + 1] = cycleOnTime
+            timings[cycle * 2 + 2] = cycleOffTime
+        }
+        return timings
+    }
+
+    private fun vibratePwmWaveform(vibrator: Vibrator, timings: LongArray) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val vibrationAttributes = VibrationAttributes.Builder()
                 .setUsage(VibrationAttributes.USAGE_MEDIA)
                 .build()
-            vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, onTime, offTime), 0), vibrationAttributes)
+            vibrator.vibrate(
+                VibrationEffect.createWaveform(timings, -1),
+                vibrationAttributes
+            )
         } else {
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
                 .build()
             @Suppress("DEPRECATION")
-            vibrator.vibrate(longArrayOf(0, onTime, offTime), 0, audioAttributes)
+            vibrator.vibrate(timings, -1, audioAttributes)
         }
     }
 
-    fun handleRumble(controllerNumber: Short, lowFreqMotor: Short, highFreqMotor: Short) {
-        var foundMatchingDevice = false
-        var vibrated = false
+    private fun usbRumbleOutput(device: AbstractController): UsbRumbleOutput =
+        synchronized(usbRumbleOutputsLock) {
+            val controllerId = device.getControllerId()
+            val existing = usbRumbleOutputs[controllerId]
+            if (existing?.device === device) {
+                existing
+            } else {
+                existing?.close()
+                UsbRumbleOutput(device).also { usbRumbleOutputs[controllerId] = it }
+            }
+        }
 
+    internal fun forgetUsbDevice(device: AbstractController) {
+        val output = synchronized(usbRumbleOutputsLock) {
+            val controllerId = device.getControllerId()
+            usbRumbleOutputs[controllerId]
+                ?.takeIf { it.device === device }
+                ?.also { usbRumbleOutputs.remove(controllerId) }
+        }
+        output?.close()
+    }
+
+    fun handleRumble(
+        controllerNumber: Short,
+        lowFreqMotor: Short,
+        highFreqMotor: Short
+    ) {
         if (handler.stopped) {
             return
         }
@@ -208,74 +359,76 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
         for (i in 0 until handler.inputDeviceContexts.size()) {
             val deviceContext = handler.inputDeviceContexts.valueAt(i)
 
-            if (deviceContext.controllerNumber == controllerNumber) {
-                foundMatchingDevice = true
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
 
+            if (deviceContext.controllerNumber == controllerNumber) {
                 deviceContext.lowFreqMotor = lowFreqMotor
                 deviceContext.highFreqMotor = highFreqMotor
 
-                // Prefer the documented Android 12 rumble API which can handle dual vibrators on PS/Xbox controllers
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
-                    vibrated = true
-                    if (deviceContext.quadVibrators) {
-                        rumbleQuadVibrators(
-                            deviceContext.vibratorManager!!,
-                            deviceContext.lowFreqMotor, deviceContext.highFreqMotor,
-                            deviceContext.leftTriggerMotor, deviceContext.rightTriggerMotor
-                        )
-                    } else {
-                        rumbleDualVibrators(
-                            deviceContext.vibratorManager!!,
-                            deviceContext.lowFreqMotor, deviceContext.highFreqMotor
-                        )
-                    }
+                if (deviceContext.directDualSenseBluetoothOutput?.updateRumble(
+                        lowFreqMotor,
+                        highFreqMotor
+                    ) == true
+                ) {
+                    continue
                 }
-                // On Shield devices, we can use their special API to rumble Shield controllers
-                else if (handler.sceManager.rumble(deviceContext.inputDevice, deviceContext.lowFreqMotor.toInt(), deviceContext.highFreqMotor.toInt())) {
-                    vibrated = true
-                }
-                // If all else fails, we have to try the old Vibrator API
-                else if (deviceContext.vibrator != null) {
-                    vibrated = true
-                    rumbleSingleVibrator(deviceContext.vibrator!!, deviceContext.lowFreqMotor, deviceContext.highFreqMotor)
-                }
+                rumbleWithAndroidApis(deviceContext)
             }
         }
 
-        for (i in 0 until handler.usbDeviceContexts.size()) {
-            val deviceContext = handler.usbDeviceContexts.valueAt(i)
+        for (deviceContext in handler.driverControllerContexts.values) {
+
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
 
             if (deviceContext.controllerNumber == controllerNumber) {
-                foundMatchingDevice = true
-                vibrated = true
-                deviceContext.device!!.rumble(lowFreqMotor, highFreqMotor)
+                val device = deviceContext.device ?: continue
+                val capabilities = device.capabilities.toInt()
+                if (capabilities and MoonBridge.LI_CCAP_RUMBLE.toInt() != 0) {
+                    usbRumbleOutput(device).submitBase(BaseRumble(lowFreqMotor, highFreqMotor))
+                }
             }
         }
+    }
 
-        // We may decide to rumble the device for player 1
-        if (controllerNumber.toInt() == 0) {
-            // If we didn't find a matching device, it must be the on-screen
-            // controls that triggered the rumble. Vibrate the device if
-            // the user has requested that behavior.
-            if (!foundMatchingDevice && handler.prefConfig.onscreenController && !handler.prefConfig.onlyL3R3 && handler.prefConfig.vibrateOsc) {
-                rumbleSingleVibrator(handler.deviceVibrator, lowFreqMotor, highFreqMotor)
-            } else if (foundMatchingDevice && !vibrated && handler.prefConfig.vibrateFallbackToDevice) {
-                // We found a device to vibrate but it didn't have rumble support. The user
-                // has requested us to vibrate the device in this case.
+    internal fun handleDirectBluetoothSendFailure(deviceContext: InputDeviceContext) {
+        if (handler.stopped || deviceContext.lowFreqMotor.toInt() == 0 &&
+            deviceContext.highFreqMotor.toInt() == 0
+        ) {
+            return
+        }
+        rumbleWithAndroidApis(deviceContext)
+    }
 
-                // We cast the unsigned short value to a signed int before multiplying by
-                // the preferred strength. The resulting value is capped at 65534 before
-                // we cast it back to a short so it doesn't go above 100%.
-                val lowFreqMotorAdjusted = Math.min(
-                    ((lowFreqMotor.toInt() and 0xffff) * handler.prefConfig.vibrateFallbackToDeviceStrength) / 100,
-                    Short.MAX_VALUE * 2
-                ).toShort()
-                val highFreqMotorAdjusted = Math.min(
-                    ((highFreqMotor.toInt() and 0xffff) * handler.prefConfig.vibrateFallbackToDeviceStrength) / 100,
-                    Short.MAX_VALUE * 2
-                ).toShort()
-
-                rumbleSingleVibrator(handler.deviceVibrator, lowFreqMotorAdjusted, highFreqMotorAdjusted)
+    private fun rumbleWithAndroidApis(deviceContext: InputDeviceContext) {
+        // Prefer the documented Android 12 API which can address both controller motors.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
+            if (deviceContext.quadVibrators) {
+                rumbleQuadVibrators(
+                    deviceContext.vibratorManager!!,
+                    deviceContext.lowFreqMotor, deviceContext.highFreqMotor,
+                    deviceContext.leftTriggerMotor, deviceContext.rightTriggerMotor
+                )
+            } else {
+                rumbleDualVibrators(
+                    deviceContext.vibratorManager!!,
+                    deviceContext.lowFreqMotor, deviceContext.highFreqMotor
+                )
+            }
+        } else if (!handler.sceManager.rumble(
+                deviceContext.inputDevice,
+                deviceContext.lowFreqMotor.toInt(),
+                deviceContext.highFreqMotor.toInt()
+            )) {
+            deviceContext.vibrator?.let { vibrator ->
+                rumbleSingleVibrator(
+                    vibrator,
+                    deviceContext.lowFreqMotor,
+                    deviceContext.highFreqMotor
+                )
             }
         }
     }
@@ -289,9 +442,21 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
             for (i in 0 until handler.inputDeviceContexts.size()) {
                 val deviceContext = handler.inputDeviceContexts.valueAt(i)
 
+                if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                    continue
+                }
+
                 if (deviceContext.controllerNumber == controllerNumber) {
                     deviceContext.leftTriggerMotor = leftTrigger
                     deviceContext.rightTriggerMotor = rightTrigger
+
+                    if (deviceContext.directDualSenseBluetoothOutput?.updateTriggerRumble(
+                            leftTrigger,
+                            rightTrigger
+                        ) == true
+                    ) {
+                        continue
+                    }
 
                     if (deviceContext.quadVibrators) {
                         rumbleQuadVibrators(
@@ -304,24 +469,116 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
             }
         }
 
-        for (i in 0 until handler.usbDeviceContexts.size()) {
-            val deviceContext = handler.usbDeviceContexts.valueAt(i)
+        for (deviceContext in handler.driverControllerContexts.values) {
+
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
 
             if (deviceContext.controllerNumber == controllerNumber) {
-                deviceContext.device!!.rumbleTriggers(leftTrigger, rightTrigger)
+                val device = deviceContext.device ?: continue
+                val capabilities = device.capabilities.toInt()
+                if (capabilities and MoonBridge.LI_CCAP_TRIGGER_RUMBLE.toInt() != 0) {
+                    usbRumbleOutput(device).submitTriggers(
+                        TriggerRumble(leftTrigger, rightTrigger)
+                    )
+                }
             }
         }
     }
 
-    @TargetApi(31)
+    fun handleAdaptiveTriggers(
+        controllerNumber: Short,
+        eventFlags: Byte,
+        typeLeft: Byte,
+        typeRight: Byte,
+        left: ByteArray,
+        right: ByteArray
+    ) {
+        if (handler.stopped ||
+            left.size != DualSenseAdaptiveTriggerEffect.PAYLOAD_SIZE ||
+            right.size != DualSenseAdaptiveTriggerEffect.PAYLOAD_SIZE
+        ) {
+            return
+        }
+
+        // Callers hand off exclusive payload snapshots, so queue them as-is for the
+        // USB output worker, which only reads them.
+        val triggers = AdaptiveTriggers(eventFlags, typeLeft, typeRight, left, right)
+        for (i in 0 until handler.inputDeviceContexts.size()) {
+            val deviceContext = handler.inputDeviceContexts.valueAt(i)
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
+            if (deviceContext.controllerNumber == controllerNumber) {
+                if (eventFlags.toInt() and DualSenseAdaptiveTriggerEffect.PLAYER_LED_FLAG != 0 &&
+                    left.isNotEmpty()
+                ) {
+                    deviceContext.directDualSenseBluetoothOutput
+                        ?.updatePlayerLeds(left[0].toInt() and 0x1F)
+                }
+                deviceContext.directDualSenseBluetoothOutput?.updateAdaptiveTriggers(
+                    eventFlags,
+                    typeLeft,
+                    typeRight,
+                    left,
+                    right
+                )
+            }
+        }
+        for (deviceContext in handler.driverControllerContexts.values) {
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
+            if (deviceContext.controllerNumber == controllerNumber) {
+                val device = deviceContext.device ?: continue
+                if (device.supportsAdaptiveTriggers) {
+                    usbRumbleOutput(device).submitAdaptiveTriggers(triggers)
+                }
+            }
+        }
+    }
+
+    fun clearAdaptiveTriggers(controllerNumber: Short) {
+        handleAdaptiveTriggers(
+            controllerNumber,
+            DualSenseAdaptiveTriggerEffect.BOTH_FLAGS.toByte(),
+            DualSenseAdaptiveTriggerEffect.TYPE_OFF,
+            DualSenseAdaptiveTriggerEffect.TYPE_OFF,
+            ByteArray(DualSenseAdaptiveTriggerEffect.PAYLOAD_SIZE),
+            ByteArray(DualSenseAdaptiveTriggerEffect.PAYLOAD_SIZE)
+        )
+    }
+
     fun handleSetControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) {
         if (handler.stopped) {
             return
         }
 
+        for (deviceContext in handler.driverControllerContexts.values) {
+            if (handler.prefConfig.multiController && !deviceContext.assignedControllerNumber) {
+                continue
+            }
+            if (deviceContext.controllerNumber == controllerNumber) {
+                deviceContext.device?.let { device ->
+                    // Post to the background thread: USB transfers can block and this
+                    // arrives on the common-c callback thread.
+                    handler.backgroundThreadHandler.post {
+                        device.setControllerLED(r, g, b)
+                    }
+                }
+            }
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             for (i in 0 until handler.inputDeviceContexts.size()) {
                 val deviceContext = handler.inputDeviceContexts.valueAt(i)
+
+                if (deviceContext.controllerNumber == controllerNumber &&
+                    deviceContext.directDualSenseBluetoothOutput?.updateLightbar(r, g, b) == true
+                ) {
+                    continue
+                }
 
                 // Ignore input devices without an RGB LED
                 if (deviceContext.controllerNumber == controllerNumber && deviceContext.hasRgbLed) {
@@ -432,6 +689,8 @@ class ControllerRumbleManager(private val handler: ControllerHandler) {
     }
 
     companion object {
+        private const val PWM_PERIOD_MS = 20L
+
         fun areBatteryCapacitiesEqual(first: Float, second: Float): Boolean {
             // With no NaNs involved, it is a simple equality comparison.
             if (!first.isNaN() && !second.isNaN()) {

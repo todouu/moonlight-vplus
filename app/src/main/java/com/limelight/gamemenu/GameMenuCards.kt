@@ -1,0 +1,1235 @@
+package com.limelight.gamemenu
+
+// In-stream tuning cards and their shared slider/focus behavior.
+
+import android.view.HapticFeedbackConstants
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import com.limelight.CustomKeyData
+import com.limelight.R
+import com.limelight.binding.audio.AudioVibrationService
+import com.limelight.ui.theme.AppShapes
+import java.util.Locale
+import kotlin.math.abs
+import com.limelight.utils.appAccentSoftColor
+import com.limelight.utils.appAccentColor
+
+
+@Composable
+internal fun GameMenuCards(
+    state: GameMenuComposeUiState,
+    callbacks: GameMenuCallbacks,
+    modifier: Modifier = Modifier,
+    onSliderGesture: (Boolean) -> Unit
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(GameMenuDimens.tight)
+    ) {
+        if (state.visibleCards.bitrate) {
+            BitrateCard(state.bitrate, callbacks, onSliderGesture, callbacks.onEditCards)
+        }
+        if (state.visibleCards.audioHaptics) {
+            AudioHapticsCard(
+                state.audioHaptics,
+                callbacks,
+                onSliderGesture,
+                callbacks.onEditCards
+            )
+        }
+        if (state.visibleCards.gyro) {
+            GyroCard(state.gyro, callbacks, onSliderGesture, callbacks.onEditCards)
+        }
+        if (state.visibleCards.shortcuts && state.customKeys.isNotEmpty()) {
+            ShortcutCard(state.customKeys, callbacks.onCustomKey, callbacks.onEditCards)
+        }
+        if (state.waveformHaptics.routes.isNotEmpty()) {
+            WaveformHapticsCard(state.waveformHaptics, callbacks)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun GameMenuCard(
+    title: String,
+    status: String? = null,
+    titleAccessory: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val longClickModifier = if (onLongClick != null) {
+        Modifier
+            .combinedClickable(
+                onClick = {},
+                onLongClick = {
+                    hapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    onLongClick()
+                }
+            )
+    } else {
+        Modifier
+    }
+    val cardFocusModifier = if (onLongClick != null) {
+        Modifier.focusProperties { canFocus = false }
+    } else {
+        Modifier
+    }
+    Surface(
+        color = colorResource(R.color.game_menu_card_background),
+        shape = GameMenuCardShape,
+        border = BorderStroke(GameMenuDimens.surfaceStroke, appAccentSoftColor()),
+        modifier = modifier
+            .fillMaxWidth()
+            // Keep long-press configuration on the card without making the whole
+            // card consume a controller focus slot before its child controls.
+            .then(cardFocusModifier)
+            .then(longClickModifier)
+    ) {
+        Column(
+            modifier = Modifier.padding(GameMenuDimens.section),
+            verticalArrangement = Arrangement.spacedBy(GameMenuDimens.tight)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        color = colorResource(R.color.game_menu_text_primary),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    titleAccessory?.let {
+                        Spacer(Modifier.width(GameMenuDimens.tight))
+                        it()
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (trailing != null) {
+                    trailing()
+                } else status?.let {
+                    Text(
+                        text = it,
+                        color = appAccentColor(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            content()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompactGameMenuSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    modifier: Modifier = Modifier
+) {
+    val colors = SliderDefaults.colors()
+    val interactionSource = remember { MutableInteractionSource() }
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = valueRange,
+        colors = colors,
+        interactionSource = interactionSource,
+        thumb = {
+            SliderDefaults.Thumb(
+                interactionSource = interactionSource,
+                colors = colors,
+                thumbSize = GameMenuSliderSpec.thumbSize
+            )
+        },
+        track = { sliderState ->
+            SliderDefaults.Track(
+                sliderState = sliderState,
+                modifier = Modifier.height(GameMenuSliderSpec.trackHeight),
+                colors = colors,
+                thumbTrackGapSize = GameMenuSliderSpec.thumbTrackGap,
+                trackInsideCornerSize = GameMenuSliderSpec.trackInsideCorner
+            )
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+internal fun TouchPointerSensitivityControl(
+    state: TouchPointerSensitivityState,
+    onValueChange: (Float) -> Boolean,
+    onValueChangeFinished: () -> Unit,
+    onSavePreset: () -> Unit,
+    onApplyPreset: (String) -> Unit,
+    onManagePresets: () -> Unit,
+    initialFocusRequester: FocusRequester? = null,
+    leftExitRequester: FocusRequester = FocusRequester.Default,
+    rightExitRequester: FocusRequester = FocusRequester.Default,
+    upExitRequester: FocusRequester = FocusRequester.Default,
+    downExitRequester: FocusRequester = FocusRequester.Default,
+    modifier: Modifier = Modifier,
+    onSliderGesture: (Boolean) -> Unit
+) {
+    if (!state.applicable) return
+
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val ownedInitialFocusRequester = remember { FocusRequester() }
+    val saveRequester = initialFocusRequester ?: ownedInitialFocusRequester
+    val sliderRequester = remember { FocusRequester() }
+    val manageRequester = remember { FocusRequester() }
+    val presetIds = state.presets.map(TouchPointerSensitivityPreset::id)
+    val presetRequesters = remember(presetIds) {
+        List(presetIds.size) { FocusRequester() }
+    }
+    GameMenuCard(
+        title = stringResource(R.string.game_menu_touch_pointer_saved_presets),
+        trailing = {
+            SensitivityPresetActions(
+                hasPresets = state.presets.isNotEmpty(),
+                saveRequester = saveRequester,
+                manageRequester = manageRequester,
+                firstPresetRequester = presetRequesters.firstOrNull() ?: sliderRequester,
+                managePresetRequester = presetRequesters.getOrNull(1)
+                    ?: presetRequesters.firstOrNull()
+                    ?: sliderRequester,
+                leftExitRequester = leftExitRequester,
+                rightExitRequester = rightExitRequester,
+                upExitRequester = upExitRequester,
+                onSavePreset = onSavePreset,
+                onManagePresets = onManagePresets
+            )
+        }
+    ) {
+        SensitivityPresetSection(
+            state = state,
+            saveRequester = saveRequester,
+            manageRequester = manageRequester,
+            presetRequesters = presetRequesters,
+            sliderRequester = sliderRequester,
+            leftExitRequester = leftExitRequester,
+            rightExitRequester = rightExitRequester,
+            onApplyPreset = onApplyPreset
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.game_menu_touch_pointer_speed),
+                color = colorResource(R.color.game_menu_text_primary),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = stringResource(
+                    R.string.game_menu_touch_pointer_speed_value,
+                    state.percent
+                ),
+                color = appAccentColor(),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            text = stringResource(R.string.game_menu_touch_pointer_speed_summary),
+            color = colorResource(R.color.game_menu_text_secondary),
+            fontSize = 10.sp,
+            lineHeight = 14.sp
+        )
+        Box(
+            modifier = modifier
+                .focusRequester(sliderRequester)
+                .focusProperties {
+                    canFocus = true
+                    up = presetRequesters.lastOrNull() ?: saveRequester
+                    down = downExitRequester
+                }
+                .fillMaxWidth()
+                .height(GameMenuSliderSpec.height)
+                .gamepadFocusOutline(GameMenuControlShape)
+                .handleSliderDpad(
+                    value = state.percent.toFloat(),
+                    step = TouchPointerSensitivityPolicy.DPAD_STEP_PERCENT.toFloat(),
+                    valueRange = TouchPointerSensitivityPolicy.MIN_PERCENT.toFloat()..
+                            TouchPointerSensitivityPolicy.MAX_PERCENT.toFloat(),
+                    onValueChange = { value ->
+                        if (onValueChange(value)) {
+                            hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                    },
+                    onValueChangeFinished = onValueChangeFinished
+                )
+                .focusable()
+                .lockParentScrollDuringGesture(onSliderGesture)
+        ) {
+            CompactGameMenuSlider(
+                value = state.percent.toFloat(),
+                onValueChange = { value ->
+                    if (onValueChange(value)) {
+                        hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    }
+                },
+                onValueChangeFinished = onValueChangeFinished,
+                valueRange = TouchPointerSensitivityPolicy.MIN_PERCENT.toFloat()..
+                        TouchPointerSensitivityPolicy.MAX_PERCENT.toFloat(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(GameMenuSliderSpec.height)
+                    .focusProperties { canFocus = false }
+            )
+        }
+        Row {
+            Text(
+                text = "${TouchPointerSensitivityPolicy.MIN_PERCENT}%",
+                color = colorResource(R.color.game_menu_text_secondary),
+                fontSize = 9.sp
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "${TouchPointerSensitivityPolicy.MAX_PERCENT}%",
+                color = colorResource(R.color.game_menu_text_secondary),
+                fontSize = 9.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun SensitivityPresetActions(
+    hasPresets: Boolean,
+    saveRequester: FocusRequester,
+    manageRequester: FocusRequester,
+    firstPresetRequester: FocusRequester,
+    managePresetRequester: FocusRequester,
+    leftExitRequester: FocusRequester,
+    rightExitRequester: FocusRequester,
+    upExitRequester: FocusRequester,
+    onSavePreset: () -> Unit,
+    onManagePresets: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SensitivityPresetActionButton(
+            iconRes = R.drawable.ic_add,
+            contentDescription = stringResource(R.string.game_menu_touch_pointer_save_preset),
+            enabled = true,
+            modifier = Modifier
+                .testTag("touchPointerPresetSave")
+                .focusRequester(saveRequester)
+                .focusProperties {
+                    up = upExitRequester
+                    down = firstPresetRequester
+                    left = leftExitRequester
+                    right = if (hasPresets) manageRequester else rightExitRequester
+                },
+            onClick = onSavePreset
+        )
+        if (hasPresets) {
+            Spacer(Modifier.width(GameMenuDimens.tight))
+            SensitivityPresetActionButton(
+                iconRes = R.drawable.phc_action_edit,
+                contentDescription = stringResource(
+                    R.string.game_menu_touch_pointer_manage_presets
+                ),
+                enabled = true,
+                modifier = Modifier
+                    .testTag("touchPointerPresetManage")
+                    .focusRequester(manageRequester)
+                    .focusProperties {
+                        up = upExitRequester
+                        down = managePresetRequester
+                        left = saveRequester
+                        right = rightExitRequester
+                    },
+                onClick = onManagePresets
+            )
+        }
+    }
+}
+
+@Composable
+private fun SensitivityPresetSection(
+    state: TouchPointerSensitivityState,
+    saveRequester: FocusRequester,
+    manageRequester: FocusRequester,
+    presetRequesters: List<FocusRequester>,
+    sliderRequester: FocusRequester,
+    leftExitRequester: FocusRequester,
+    rightExitRequester: FocusRequester,
+    onApplyPreset: (String) -> Unit
+) {
+    val actionRequesters = if (state.presets.isEmpty()) {
+        listOf(saveRequester)
+    } else {
+        listOf(saveRequester, manageRequester)
+    }
+    if (state.presets.isEmpty()) {
+        Text(
+            text = stringResource(R.string.game_menu_touch_pointer_no_presets),
+            color = colorResource(R.color.game_menu_text_secondary),
+            fontSize = 10.sp
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(GameMenuDimens.tight)) {
+        state.presets.chunked(3).forEachIndexed { rowIndex, rowPresets ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(GameMenuDimens.tight)
+            ) {
+                rowPresets.forEachIndexed { columnIndex, preset ->
+                    val index = rowIndex * 3 + columnIndex
+                    val rowStart = rowIndex * 3
+                    val rowEnd = minOf(rowStart + 3, state.presets.size)
+                    val nextRowStart = rowStart + 3
+                    val upRequester = if (rowIndex == 0) {
+                        actionRequesters[minOf(columnIndex, actionRequesters.lastIndex)]
+                    } else {
+                        presetRequesters[index - 3]
+                    }
+                    val downRequester = if (nextRowStart < state.presets.size) {
+                        presetRequesters[minOf(nextRowStart + columnIndex, state.presets.lastIndex)]
+                    } else {
+                        sliderRequester
+                    }
+                    SensitivityPresetButton(
+                        name = preset.name,
+                        selected = preset.id == state.activePresetId,
+                        onClick = { onApplyPreset(preset.id) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("touchPointerPreset:${preset.id}")
+                            .focusRequester(presetRequesters[index])
+                            .focusProperties {
+                                up = upRequester
+                                down = downRequester
+                                left = if (columnIndex > 0) {
+                                    presetRequesters[index - 1]
+                                } else {
+                                    leftExitRequester
+                                }
+                                right = if (index + 1 < rowEnd) {
+                                    presetRequesters[index + 1]
+                                } else {
+                                    rightExitRequester
+                                }
+                            }
+                    )
+                }
+                repeat(3 - rowPresets.size) {
+                    Spacer(Modifier.weight(1f).height(36.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SensitivityPresetButton(
+    name: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val shape = GameMenuControlShape
+    val accent = appAccentColor()
+    val inactiveBorder = colorResource(R.color.game_menu_text_secondary).copy(alpha = 0.28f)
+    Box(
+        modifier = modifier
+            .height(36.dp)
+            .clip(shape)
+            .background(
+                if (selected) accent.copy(alpha = 0.14f)
+                else colorResource(R.color.game_menu_list_item_normal)
+            )
+            .border(
+                GameMenuDimens.surfaceStroke,
+                if (selected) accent else inactiveBorder,
+                shape
+            )
+            .gamepadFocusOutline(shape)
+            .clickable(role = Role.Button) {
+                hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onClick()
+            }
+            .semantics {
+                contentDescription = name
+                this.selected = selected
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = name,
+            color = if (selected) accent else colorResource(R.color.game_menu_text_primary),
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun SensitivityPresetActionButton(
+    iconRes: Int,
+    contentDescription: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val shape = CircleShape
+    val accent = appAccentColor()
+    Box(
+        modifier = modifier
+            .size(32.dp)
+            .focusProperties { canFocus = enabled }
+            .clip(shape)
+            .background(accent.copy(alpha = if (enabled) 0.10f else 0.04f))
+            .border(
+                GameMenuDimens.surfaceStroke,
+                accent.copy(alpha = if (enabled) 0.24f else 0.08f),
+                shape
+            )
+            .gamepadFocusOutline(shape)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(enabled = enabled, role = Role.Button) {
+                hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = null,
+            tint = accent.copy(alpha = if (enabled) 1f else 0.36f),
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BitrateCard(
+    state: BitrateCardState,
+    callbacks: GameMenuCallbacks,
+    onSliderGesture: (Boolean) -> Unit,
+    onConfigure: () -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    var tipVisible by remember { mutableStateOf(false) }
+    val currentLabel = stringResource(
+        R.string.game_menu_bitrate_current,
+        state.currentBitrateKbps / 1000
+    )
+    GameMenuCard(
+        title = stringResource(R.string.game_menu_tab_bitrate),
+        status = state.abrStatus,
+        titleAccessory = {
+            BitrateHelpButton(
+                tipVisible = tipVisible,
+                onToggleTip = { tipVisible = !tipVisible },
+                onDismissTip = { tipVisible = false },
+                onLongClick = callbacks.onBitrateHapticMode
+            )
+        },
+        onLongClick = onConfigure
+    ) {
+        Text(
+            text = currentLabel,
+            color = colorResource(R.color.game_menu_text_secondary),
+            fontSize = 10.sp
+        )
+        Text(
+            text = BitrateCardController.formatBitrateMbps(state.selectedBitrateKbps),
+            color = appAccentColor(),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+        CompactGameMenuSlider(
+            value = state.progress,
+            onValueChange = { value ->
+                if (callbacks.onBitrateProgress(value)) {
+                    hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+            },
+            onValueChangeFinished = callbacks.onBitrateApply,
+            valueRange = 0f..BitrateCardController.MAX_PROGRESS.toFloat(),
+            modifier = Modifier
+                .focusProperties { canFocus = true }
+                .fillMaxWidth()
+                .height(GameMenuSliderSpec.height)
+                .gamepadFocusOutline(GameMenuControlShape)
+                .handleSliderDpad(
+                    value = state.progress,
+                    step = 1f,
+                    valueRange = 0f..BitrateCardController.MAX_PROGRESS.toFloat(),
+                    onValueChange = { value ->
+                        if (callbacks.onBitrateProgress(value)) {
+                            hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                    },
+                    onValueChangeFinished = callbacks.onBitrateApply
+                )
+                .lockParentScrollDuringGesture(onSliderGesture)
+        )
+        Row {
+            Text("0.5 Mbps", color = colorResource(R.color.game_menu_text_secondary), fontSize = 9.sp)
+            Spacer(Modifier.weight(1f))
+            Text("200 Mbps", color = colorResource(R.color.game_menu_text_secondary), fontSize = 9.sp)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BitrateHelpButton(
+    tipVisible: Boolean,
+    onToggleTip: () -> Unit,
+    onDismissTip: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val accent = appAccentColor()
+    val helpDescription = stringResource(R.string.game_menu_bitrate_tip)
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .focusProperties { canFocus = true }
+            .gamepadFocusOutline(CircleShape)
+            .semantics { contentDescription = helpDescription }
+            .combinedClickable(
+                onClick = onToggleTip,
+                onLongClick = onLongClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .border(1.dp, accent, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            VisuallyCenteredBadgeText(
+                text = "?",
+                color = accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        if (tipVisible) {
+            Popup(
+                alignment = Alignment.TopEnd,
+                onDismissRequest = onDismissTip,
+                properties = PopupProperties(focusable = true)
+            ) {
+                Surface(
+                    color = colorResource(R.color.game_menu_card_background),
+                    shape = AppShapes.overlay,
+                    border = BorderStroke(GameMenuDimens.surfaceStroke, accent.copy(alpha = 0.22f)),
+                    modifier = Modifier.widthIn(max = 260.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.game_menu_bitrate_tip),
+                        color = colorResource(R.color.game_menu_text_primary),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(GameMenuDimens.outer)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class AudioHapticsChoice(
+    val value: String,
+    val label: String,
+    val selected: Boolean
+)
+
+@Composable
+private fun AudioHapticsCard(
+    state: AudioHapticsCardState,
+    callbacks: GameMenuCallbacks,
+    onSliderGesture: (Boolean) -> Unit,
+    onConfigure: () -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val title = stringResource(R.string.game_menu_tab_audio_haptics)
+    val modeNames = stringArrayResource(R.array.audio_vibration_mode_names)
+    val modeValues = stringArrayResource(R.array.audio_vibration_mode_values)
+    val sceneNames = stringArrayResource(R.array.audio_vibration_scene_names)
+    val sceneValues = stringArrayResource(R.array.audio_vibration_scene_values)
+    val modeChoices = modeValues.mapIndexed { index, value ->
+        AudioHapticsChoice(
+            value = value,
+            label = when (value) {
+                AudioVibrationService.MODE_DEVICE_ONLY ->
+                    stringResource(R.string.game_menu_audio_haptics_route_device_short)
+                AudioVibrationService.MODE_GAMEPAD_ONLY ->
+                    stringResource(R.string.game_menu_audio_haptics_route_gamepad_short)
+                AudioVibrationService.MODE_BOTH ->
+                    stringResource(R.string.game_menu_audio_haptics_route_both_short)
+                else -> modeNames.getOrElse(index) { value }
+            },
+            selected = value == state.mode
+        )
+    }
+    val sceneChoices = sceneValues.mapIndexed { index, value ->
+        AudioHapticsChoice(
+            value = value,
+            label = compactSegmentLabel(sceneNames.getOrElse(index) { value }),
+            selected = value.toIntOrNull() == state.scene
+        )
+    }
+
+    GameMenuCard(
+        title = title,
+        trailing = {
+            AudioHapticsResetButton(callbacks.onAudioHapticsReset)
+            Spacer(Modifier.width(GameMenuDimens.tight))
+            InlineToggle(
+                checked = state.enabled,
+                contentDescription = title,
+                onToggle = {
+                    callbacks.onAudioHapticsEnabled(!state.enabled)
+                }
+            )
+        },
+        onLongClick = onConfigure
+    ) {
+        if (state.enabled) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(R.string.title_seekbar_audio_vibration_strength),
+                    color = colorResource(R.color.game_menu_text_secondary),
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = stringResource(
+                        R.string.game_menu_audio_haptics_strength_value,
+                        state.strength
+                    ),
+                    color = appAccentColor(),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            CompactGameMenuSlider(
+                value = state.strength.toFloat(),
+                onValueChange = { value ->
+                    if (callbacks.onAudioHapticsStrength(value)) {
+                        hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    }
+                },
+                onValueChangeFinished = callbacks.onAudioHapticsStrengthFinished,
+                valueRange = 0f..AudioVibrationService.MAX_STRENGTH.toFloat(),
+                modifier = Modifier
+                    .focusProperties { canFocus = true }
+                    .fillMaxWidth()
+                    .height(GameMenuSliderSpec.height)
+                    .gamepadFocusOutline(GameMenuControlShape)
+                    .handleSliderDpad(
+                        value = state.strength.toFloat(),
+                        step = AudioHapticsCardController.HAPTIC_STEP.toFloat(),
+                        valueRange = 0f..AudioVibrationService.MAX_STRENGTH.toFloat(),
+                        onValueChange = { value ->
+                            if (callbacks.onAudioHapticsStrength(value)) {
+                                hapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        },
+                        onValueChangeFinished = callbacks.onAudioHapticsStrengthFinished
+                    )
+                    .lockParentScrollDuringGesture(onSliderGesture)
+            )
+            AudioHapticsChoiceRow(
+                label = stringResource(R.string.title_list_audio_vibration_mode),
+                choices = modeChoices,
+                onChoice = callbacks.onAudioHapticsMode
+            )
+            AudioHapticsChoiceRow(
+                label = stringResource(R.string.title_list_audio_vibration_scene),
+                choices = sceneChoices,
+                onChoice = { value ->
+                    value.toIntOrNull()?.let(callbacks.onAudioHapticsScene)
+                }
+            )
+        }
+        if (state.pendingRestart) {
+            Text(
+                text = stringResource(R.string.game_menu_audio_haptics_pending_restart),
+                color = appAccentColor(),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun AudioHapticsResetButton(onReset: () -> Unit) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val description = stringResource(R.string.game_menu_audio_haptics_reset)
+    val shape = CircleShape
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(shape)
+            .focusProperties { canFocus = true }
+            .gamepadFocusOutline(shape)
+            .semantics { contentDescription = description }
+            .clickable {
+                hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onReset()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.phc_action_reset),
+            contentDescription = null,
+            tint = colorResource(R.color.game_menu_text_secondary),
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun AudioHapticsChoiceRow(
+    label: String,
+    choices: List<AudioHapticsChoice>,
+    onChoice: (String) -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    val accent = appAccentColor()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = colorResource(R.color.game_menu_text_secondary),
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(0.28f)
+        )
+        Row(
+            modifier = Modifier
+                .weight(0.72f)
+                .fillMaxHeight()
+                .selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            choices.forEach { choice ->
+                val shape = AppShapes.small
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(shape)
+                        .background(
+                            if (choice.selected) accent.copy(alpha = 0.12f)
+                            else Color.Transparent
+                        )
+                        .focusProperties { canFocus = true }
+                        .gamepadFocusOutline(shape)
+                        .selectable(
+                            selected = choice.selected,
+                            role = Role.RadioButton,
+                            onClick = {
+                                hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                onChoice(choice.value)
+                            }
+                        )
+                        .padding(horizontal = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = choice.label,
+                        color = if (choice.selected) {
+                            accent
+                        } else {
+                            colorResource(R.color.game_menu_text_secondary)
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = if (choice.selected) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GyroCard(
+    state: GyroCardState,
+    callbacks: GameMenuCallbacks,
+    onSliderGesture: (Boolean) -> Unit,
+    onConfigure: () -> Unit
+) {
+    val title = stringResource(R.string.game_menu_tab_gyro)
+    GameMenuCard(
+        title = title,
+        trailing = {
+            Text(
+                text = if (state.enabled) "ON" else "OFF",
+                color = appAccentColor(),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.width(GameMenuDimens.section))
+            InlineToggle(
+                checked = state.enabled,
+                contentDescription = title,
+                onToggle = {
+                    callbacks.onGyroEnabled(!state.enabled)
+                }
+            )
+        },
+        onLongClick = onConfigure
+    ) {
+        if (state.enabled) {
+            SettingSwitchRow(
+                label = stringResource(R.string.gyro_mouse_mode_label),
+                checked = state.mouseMode,
+                onCheckedChange = callbacks.onGyroMouseMode
+            )
+            SettingValueRow(
+                label = stringResource(R.string.gyro_activation_method),
+                value = state.activationKeyLabel,
+                onClick = callbacks.onGyroActivationKey
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(R.string.gyro_sensitivity),
+                    color = colorResource(R.color.game_menu_text_secondary),
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = String.format(Locale.US, "%.1fx", state.sensitivity),
+                    color = appAccentColor(),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Slider(
+                value = state.sensitivity,
+                onValueChange = callbacks.onGyroSensitivity,
+                onValueChangeFinished = callbacks.onGyroSensitivityFinished,
+                valueRange = 0.5f..10.0f,
+                modifier = Modifier
+                    .focusProperties { canFocus = true }
+                    .fillMaxWidth()
+                    .gamepadFocusOutline(GameMenuControlShape)
+                    .handleSliderDpad(
+                        value = state.sensitivity,
+                        step = 0.1f,
+                        valueRange = 0.5f..10.0f,
+                        onValueChange = callbacks.onGyroSensitivity,
+                        onValueChangeFinished = callbacks.onGyroSensitivityFinished
+                    )
+                    .lockParentScrollDuringGesture(onSliderGesture)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(GameMenuDimens.outer)) {
+                SettingSwitchRow(
+                    label = stringResource(R.string.gyro_invert_x_axis),
+                    checked = state.invertX,
+                    onCheckedChange = callbacks.onGyroInvertX,
+                    modifier = Modifier.weight(1f)
+                )
+                SettingSwitchRow(
+                    label = stringResource(R.string.gyro_invert_y_axis),
+                    checked = state.invertY,
+                    onCheckedChange = callbacks.onGyroInvertY,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+internal enum class SliderGestureDirection {
+    Undecided,
+    Horizontal,
+    Vertical
+}
+
+internal fun classifySliderGesture(
+    dragOffset: Offset,
+    touchSlop: Float
+): SliderGestureDirection {
+    if (dragOffset.getDistance() < touchSlop) return SliderGestureDirection.Undecided
+    return if (abs(dragOffset.x) > abs(dragOffset.y)) {
+        SliderGestureDirection.Horizontal
+    } else {
+        SliderGestureDirection.Vertical
+    }
+}
+
+internal fun Modifier.lockParentScrollDuringGesture(
+    onGestureActive: (Boolean) -> Unit
+): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown(
+            requireUnconsumed = false,
+            pass = PointerEventPass.Initial
+        )
+        var horizontalGesture = false
+        try {
+            while (true) {
+                val change = awaitPointerEvent(PointerEventPass.Initial).changes
+                    .firstOrNull { it.id == down.id }
+                    ?: break
+                if (!change.pressed) break
+
+                if (!horizontalGesture) {
+                    val dragOffset = change.position - down.position
+                    when (classifySliderGesture(dragOffset, viewConfiguration.touchSlop)) {
+                        SliderGestureDirection.Undecided -> continue
+                        SliderGestureDirection.Vertical -> break
+                        SliderGestureDirection.Horizontal -> {
+                            horizontalGesture = true
+                            onGestureActive(true)
+                        }
+                    }
+                }
+            }
+        } finally {
+            if (horizontalGesture) onGestureActive(false)
+        }
+    }
+}
+
+@Composable
+internal fun Modifier.gamepadFocusOutline(shape: Shape): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    val focusColor = appAccentColor()
+    return onFocusChanged { focused = it.isFocused }
+        .then(if (focused) Modifier.border(2.dp, focusColor, shape) else Modifier)
+}
+
+private fun Modifier.handleSliderDpad(
+    value: Float,
+    step: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit
+): Modifier = onPreviewKeyEvent { event ->
+    val direction = when (event.key) {
+        Key.DirectionLeft -> -1f
+        Key.DirectionRight -> 1f
+        else -> return@onPreviewKeyEvent false
+    }
+    when (event.type) {
+        KeyEventType.KeyDown -> {
+            val adjusted = (value + direction * step).coerceIn(valueRange.start, valueRange.endInclusive)
+            if (adjusted != value) onValueChange(adjusted)
+            true
+        }
+        KeyEventType.KeyUp -> {
+            onValueChangeFinished()
+            true
+        }
+        else -> false
+    }
+}
+
+@Composable
+private fun SettingSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            color = colorResource(R.color.game_menu_text_primary),
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        InlineToggle(
+            checked = checked,
+            contentDescription = label,
+            onToggle = {
+                onCheckedChange(!checked)
+            }
+        )
+    }
+}
+
+@Composable
+private fun SettingValueRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusProperties { canFocus = true }
+            .clip(GameMenuControlShape)
+            .gamepadFocusOutline(GameMenuControlShape)
+            .clickable(onClick = onClick)
+            .padding(vertical = GameMenuDimens.tight),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = colorResource(R.color.game_menu_text_secondary), fontSize = 10.sp)
+        Spacer(Modifier.weight(1f))
+        Text(value, color = appAccentColor(), fontSize = 10.sp)
+        Spacer(Modifier.width(GameMenuDimens.tight))
+        Text("›", color = colorResource(R.color.game_menu_text_secondary), fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun ShortcutCard(
+    keys: List<CustomKeyData>,
+    onKey: (CustomKeyData) -> Unit,
+    onConfigure: () -> Unit
+) {
+    val hapticFeedback = LocalGameMenuHapticFeedback.current
+    GameMenuCard(
+        title = stringResource(R.string.game_menu_tab_shortcuts),
+        onLongClick = onConfigure
+    ) {
+        keys.forEachIndexed { index, key ->
+            Text(
+                text = key.name,
+                color = colorResource(R.color.game_menu_text_primary),
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusProperties { canFocus = true }
+                    .clip(GameMenuControlShape)
+                    .gamepadFocusOutline(GameMenuControlShape)
+                    .clickable {
+                        hapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        onKey(key)
+                    }
+                    .padding(
+                        horizontal = GameMenuDimens.section,
+                        vertical = GameMenuDimens.compact
+                    )
+            )
+            if (index < keys.lastIndex) {
+                Spacer(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(appAccentSoftColor())
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WaveformHapticsCard(
+    state: WaveformHapticsCardState,
+    callbacks: GameMenuCallbacks
+) {
+    GameMenuCard(title = stringResource(R.string.waveform_card_title)) {
+        state.routes.forEach { route ->
+            Text(
+                text = route.label + "\n" + route.status,
+                color = colorResource(R.color.game_menu_text_secondary),
+                fontSize = 10.sp
+            )
+            if (route.canTest || route.testing) {
+                androidx.compose.material3.TextButton(
+                    onClick = { callbacks.onWaveformTest(route.id, route.testing) }
+                ) {
+                    Text(
+                        stringResource(
+                            if (route.testing) R.string.waveform_test_cancel
+                            else R.string.waveform_test_channels
+                        )
+                    )
+                }
+            }
+        }
+    }
+}

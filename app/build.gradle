@@ -1,6 +1,38 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { stream ->
+        localProperties.load(stream)
+    }
+}
+
+def githubOAuthClientId = (
+        project.findProperty("githubOAuthClientId")
+                ?: localProperties.getProperty("githubOAuthClientId")
+                ?: System.getenv("GITHUB_OAUTH_CLIENT_ID")
+                ?: ""
+).toString().trim()
+def escapeBuildConfigString = { value ->
+    value.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+def enableX86TestAbi = (project.findProperty("enableX86TestAbi") ?: "false").toString().toBoolean()
+def audioHapticsAppLabel = "Moonlight T+"
+def audioHapticsSdkDir = (
+        project.findProperty("audioHapticsSdkDir")
+                ?: localProperties.getProperty("audioHapticsSdkDir")
+                ?: System.getenv("AUDIO_HAPTICS_SDK_DIR")
+                ?: ""
+).toString().trim()
+if (audioHapticsSdkDir.isEmpty()) {
+    throw new GradleException(
+            "audioHapticsSdkDir is required; point it at the Apache-2.0 audio-haptics-sdk checkout"
+    )
 }
 
 // 仅在存在 google-services.json 且满足条件时应用 Google Services 插件
@@ -23,15 +55,38 @@ android {
     defaultConfig {
         minSdk 22
         targetSdk 35
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        versionName "12.9.8"
-        versionCode = 390
+        // minSdk 22 ≥ 21：系统原生支持 VectorDrawable，禁用为 API<21 设备生成位图
+        // 回退的老管线（其栅格化器无法解析矢量里的 ?attr 主题色，Material You
+        // 强调色会让它直接构建失败；这些 PNG 在 22+ 设备上本来也永远不会被用到）。
+        vectorDrawables.useSupportLibrary = true
+
+        // 记录最近一次发布的版本。发版时由 CI 依据 tag 和发布历史覆写
+        // （见 .github/release/version-code.sh）。
+        versionName "12.12.11.beta.5"
+        versionCode = 121211005
+
+        // Optional GitHub OAuth App client ID. Enable Device Flow on the OAuth app,
+        // then set githubOAuthClientId in local.properties, pass -PgithubOAuthClientId=...,
+        // or set GITHUB_OAUTH_CLIENT_ID in the environment.
+        buildConfigField "String", "GITHUB_OAUTH_CLIENT_ID", "\"${escapeBuildConfigString(githubOAuthClientId)}\""
+
+        externalNativeBuild {
+            ndkBuild {
+                arguments "AUDIO_HAPTICS_SDK_DIR=${file(audioHapticsSdkDir).absolutePath.replace('\\', '/')}"
+            }
+        }
 
         // Generate native debug symbols to allow Google Play to symbolicate our native crashes
         ndk.debugSymbolLevel = 'FULL'
 
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a'
+            def supportedAbis = ['arm64-v8a', 'armeabi-v7a']
+            if (enableX86TestAbi) {
+                supportedAbis += 'x86'
+            }
+            abiFilters(*supportedAbis)
         }
     }
 
@@ -39,6 +94,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
 
     productFlavors {
@@ -86,6 +142,7 @@ android {
     lint {
         disable 'MissingTranslation'
         lintConfig file('lint.xml')
+        baseline file('lint-baseline.xml')
     }
 
     bundle {
@@ -123,11 +180,12 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix ".vplus_debug"
-            resValue "string", "app_label", "Moonlight T+"
-            resValue "string", "app_label_root", "Moonlight T+"
+            resValue "string", "app_label", audioHapticsAppLabel
+            resValue "string", "app_label_root", audioHapticsAppLabel
 
             minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro', 'proguard-debug.pro'
         }
         release {
             // To whomever is releasing/using an APK in release mode with
@@ -161,7 +219,7 @@ android {
             //
             // TL;DR: Leave the following line alone!
             applicationIdSuffix ".qiin"
-            resValue "string", "app_label", "Moonlight T+"
+            resValue "string", "app_label", audioHapticsAppLabel
             resValue "string", "app_label_root", "Moonlight T+ (Root)"
 
             minifyEnabled true
@@ -180,9 +238,15 @@ android {
 }
 
 dependencies {
+    implementation project(':usbip-backend')
     // Desugaring 支持，用于在旧版 Android 上使用 Java 8+ API
     coreLibraryDesugaring libs.desugar.jdk.libs
-    
+
+    // Lossless Scaling Frame Generation 桥接模块（仅 arm64-v8a 设备 + Android 10+ 实际可用）。
+    // 阶段 1：仅提供占位 API；阶段 2 起接入 MediaCodec 拦截路径。
+    implementation project(':framegen')
+    implementation project(':moonlight-haptics-android')
+
     implementation libs.bouncycastle.prov
     implementation libs.bouncycastle.pkix
     implementation libs.jcodec
@@ -204,6 +268,13 @@ dependencies {
     implementation libs.flexbox
     implementation libs.tvprovider
     implementation libs.zxing.embedded
+    implementation libs.androidx.activity.compose
+    implementation platform(libs.androidx.compose.bom)
+    implementation libs.androidx.compose.foundation
+    implementation libs.androidx.compose.material3
+    implementation libs.androidx.compose.ui
+    implementation libs.androidx.compose.ui.tooling.preview
+    implementation libs.compose.showcase.sequence
 
     // Firebase Analytics + Crashlytics
     // BOM 版本说明: https://firebase.google.com/support/release-notes/android
@@ -217,6 +288,17 @@ dependencies {
     implementation libs.kotlin.stdlib
     implementation libs.kotlinx.coroutines.android
     implementation libs.androidx.lifecycle.runtime.ktx
+    implementation libs.hidden.api.bypass
 
     testImplementation libs.junit
+    testImplementation libs.json
+    testImplementation libs.okhttp.tls
+    testImplementation libs.okhttp.mockwebserver
+    testImplementation libs.kxml2
+    androidTestImplementation platform(libs.androidx.compose.bom)
+    androidTestImplementation libs.androidx.compose.ui.test.junit4
+    androidTestImplementation libs.androidx.test.ext.junit
+    androidTestImplementation libs.androidx.test.runner
+    androidTestImplementation libs.androidx.test.espresso.core
+    debugImplementation libs.androidx.compose.ui.test.manifest
 }

@@ -17,9 +17,12 @@ class ComputerDetails {
         init {
             require(port > 0) { "Invalid port" }
 
-            // If this was an escaped IPv6 address, remove the brackets
+            // Only IPv6 literals may use brackets. Preserve other bracketed input for validation.
             if (address.startsWith("[") && address.endsWith("]")) {
-                address = address.substring(1, address.length - 1)
+                val unbracketedAddress = address.substring(1, address.length - 1)
+                if (unbracketedAddress.contains(':')) {
+                    address = unbracketedAddress
+                }
             }
         }
 
@@ -57,12 +60,15 @@ class ComputerDetails {
     var externalPort = 0
     var pairState: PairingManager.PairState? = null
     var serverInfoTrustedByCert = false
+    // Legacy HTTPS 401 authenticates NOT_PAIRED even when details come from HTTP.
+    var pairStateTrusted = false
     var runningGameId = 0
     var rawAppList: String? = null
     var nvidiaServer = false
     var useVdd = false
     var sunshineVersion: String? = null
     var supportsDesktopSpecialApp = false
+    var vddCapabilityVersion: Int? = null
 
     constructor()
 
@@ -112,6 +118,7 @@ class ComputerDetails {
         this.httpsPort = details.httpsPort
         this.pairState = details.pairState
         this.serverInfoTrustedByCert = details.serverInfoTrustedByCert
+        this.pairStateTrusted = details.pairStateTrusted
         this.runningGameId = details.runningGameId
         this.nvidiaServer = details.nvidiaServer
         this.useVdd = details.useVdd
@@ -120,6 +127,7 @@ class ComputerDetails {
             this.sunshineVersion = details.sunshineVersion
         }
         this.supportsDesktopSpecialApp = details.supportsDesktopSpecialApp
+        this.vddCapabilityVersion = details.vddCapabilityVersion
 
         this.availableAddresses = ArrayList(details.availableAddresses)
     }
@@ -140,14 +148,14 @@ class ComputerDetails {
         return availableAddresses.size > 1
     }
 
-    fun getAddressTypeDescription(address: AddressTuple?): String {
+    fun getAddressTypeDescription(context: android.content.Context, address: AddressTuple?): String {
         if (address == null) return ""
 
-        if (address == localAddress) return "本地网络"
-        if (address == remoteAddress) return "远程网络"
-        if (address == manualAddress) return "手动配置"
-        if (address == ipv6Address) return "IPv6网络"
-        return "其他网络"
+        if (address == localAddress) return context.getString(com.limelight.R.string.address_local)
+        if (address == remoteAddress) return context.getString(com.limelight.R.string.address_remote)
+        if (address == manualAddress) return context.getString(com.limelight.R.string.address_manual)
+        if (address == ipv6Address) return context.getString(com.limelight.R.string.address_ipv6)
+        return context.getString(com.limelight.R.string.address_other)
     }
 
     fun getLanIpv4Addresses(): List<AddressTuple> {
@@ -241,6 +249,7 @@ class ComputerDetails {
         str.append("HTTPS Port: ").append(httpsPort).append("\n")
         str.append("Sunshine Version: ").append(getSunshineVersionDisplay()).append("\n")
         str.append("Desktop Special App Support: ").append(supportsDesktopSpecialApp).append("\n")
+        str.append("VDD Capability Version: ").append(vddCapabilityVersion).append("\n")
         return str.toString()
     }
 
@@ -249,6 +258,7 @@ class ComputerDetails {
 
         fun isLanIpv4Address(address: AddressTuple?): Boolean {
             if (address?.address == null) return false
+            if (!NetHelper.isIpLiteral(address.address) || address.address.contains(':')) return false
 
             return try {
                 val inetAddress = InetAddress.getByName(address.address)
@@ -261,11 +271,6 @@ class ComputerDetails {
 
         fun isIpv6Address(address: AddressTuple?): Boolean {
             return address?.address?.contains(":") == true
-        }
-
-        fun isPublicAddress(address: AddressTuple?): Boolean {
-            if (address?.address == null) return false
-            return !isLanIpv4Address(address) && !isIpv6Address(address)
         }
     }
 }

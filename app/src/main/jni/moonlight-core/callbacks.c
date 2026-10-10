@@ -10,7 +10,9 @@
 
 #include <cpu-features.h>
 
-#include "bass_energy_bridge.h"
+#include "audio_haptics_android_adapter_bridge.h"
+
+#define AUDIO_BACKLOG_DROP_THRESHOLD_MS 40
 
 static OpusMSDecoder* Decoder;
 static OPUS_MULTISTREAM_CONFIGURATION OpusConfig;
@@ -39,11 +41,14 @@ static jmethodID BridgeClRumbleMethod;
 static jmethodID BridgeClConnectionStatusUpdateMethod;
 static jmethodID BridgeClSetHdrModeMethod;
 static jmethodID BridgeClRumbleTriggersMethod;
+static jmethodID BridgeClSetAdaptiveTriggersMethod;
 static jmethodID BridgeClSetMotionEventStateMethod;
 static jmethodID BridgeClSetControllerLEDMethod;
+static jmethodID BridgeClDs5HapticsPcmMethod;
 static jmethodID BridgeClResolutionChangedMethod;
 static jmethodID BridgeClClipboardDataMethod;
-static jmethodID BridgeBassEnergyMethod;
+static jmethodID BridgeClCursorUpdateMethod;
+static jmethodID BridgeClRemoteTextContextMethod;
 static jbyteArray DecodedFrameBuffer;
 static jshortArray DecodedAudioBuffer;
 // Pre-allocated byte buffer for AC3/E-AC3 raw frame passthrough.
@@ -53,6 +58,8 @@ static jshortArray DecodedAudioBuffer;
 // 2.5 KB at 640 kbps so this is generous either way.
 #define ENCODED_AUDIO_BUFFER_SIZE 16384
 static jbyteArray EncodedAudioBuffer;
+
+void BridgeClRemoteTextContext(const LI_REMOTE_TEXT_CONTEXT* context);
 
 void DetachThread(void* context) {
     (*JVM)->DetachCurrentThread(JVM);
@@ -98,7 +105,7 @@ Java_com_limelight_nvstream_jni_MoonBridge_init(JNIEnv *env, jclass clazz) {
     BridgeDrStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStart", "()V");
     BridgeDrStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrStop", "()V");
     BridgeDrCleanupMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrCleanup", "()V");
-    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJ)I");
+    BridgeDrSubmitDecodeUnitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeDrSubmitDecodeUnit", "([BIIIICJJJ)I");
     BridgeArInitMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArInit", "(IIIII)I");
     BridgeArStartMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStart", "()V");
     BridgeArStopMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeArStop", "()V");
@@ -114,11 +121,15 @@ Java_com_limelight_nvstream_jni_MoonBridge_init(JNIEnv *env, jclass clazz) {
     BridgeClConnectionStatusUpdateMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClConnectionStatusUpdate", "(I)V");
     BridgeClSetHdrModeMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClSetHdrMode", "(Z[B)V");
     BridgeClRumbleTriggersMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClRumbleTriggers", "(SSS)V");
+    BridgeClSetAdaptiveTriggersMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClSetAdaptiveTriggers", "(SBBB[B[B)V");
     BridgeClSetMotionEventStateMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClSetMotionEventState", "(SBS)V");
     BridgeClSetControllerLEDMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClSetControllerLED", "(SBBB)V");
+    BridgeClDs5HapticsPcmMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClDs5HapticsPcm", "(SBIJIIBB[B)V");
     BridgeClResolutionChangedMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClResolutionChanged", "(II)V");
     BridgeClClipboardDataMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClClipboardData", "([B)V");
-    BridgeBassEnergyMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeBassEnergy", "(II)V");
+    BridgeClCursorUpdateMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClCursorUpdate", "(IIIIII[B)V");
+    BridgeClRemoteTextContextMethod = (*env)->GetStaticMethodID(env, clazz, "bridgeClRemoteTextContext", "([IJJ)V");
+    LiSetRemoteTextContextCallback(BridgeClRemoteTextContext);
 }
 
 int BridgeDrSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
@@ -185,7 +196,8 @@ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
             ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
                                               DecodedFrameBuffer, currentEntry->length, currentEntry->bufferType,
                                               decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
-                                              (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+                                              (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs,
+                                              (jlong)decodeUnit->presentationTimeUs);
             if ((*env)->ExceptionCheck(env)) {
                 // We will crash here
                 (*JVM)->DetachCurrentThread(JVM);
@@ -206,7 +218,8 @@ int BridgeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     ret = (*env)->CallStaticIntMethod(env, GlobalBridgeClass, BridgeDrSubmitDecodeUnitMethod,
                                        DecodedFrameBuffer, offset, BUFFER_TYPE_PICDATA,
                                        decodeUnit->frameNumber, decodeUnit->frameType, (jchar)decodeUnit->frameHostProcessingLatency,
-                                       (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs);
+                                       (jlong)decodeUnit->receiveTimeUs, (jlong)decodeUnit->enqueueTimeUs,
+                                       (jlong)decodeUnit->presentationTimeUs);
     if ((*env)->ExceptionCheck(env)) {
         // We will crash here
         (*JVM)->DetachCurrentThread(JVM);
@@ -250,8 +263,8 @@ int BridgeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusCon
             // We know ahead of time what the buffer size will be for decoded audio, so pre-allocate it
             DecodedAudioBuffer = (*env)->NewGlobalRef(env, (*env)->NewShortArray(env, opusConfig->channelCount * opusConfig->samplesPerFrame));
 
-            // Initialize bass energy analyzer for audio-driven vibration
-            bass_energy_init(opusConfig->sampleRate, opusConfig->channelCount);
+            audio_haptics_android_adapter_init(
+                opusConfig->sampleRate, opusConfig->channelCount);
         } else {
             // Encoded passthrough (AC3 / E-AC3): skip Opus decoder, allocate raw byte buffer.
             Decoder = NULL;
@@ -279,6 +292,8 @@ void BridgeArStop(void) {
 
 void BridgeArCleanup() {
     JNIEnv* env = GetThreadEnv();
+
+    audio_haptics_android_adapter_cleanup();
 
     if (Decoder != NULL) {
         opus_multistream_decoder_destroy(Decoder);
@@ -328,27 +343,37 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                                             OpusConfig.samplesPerFrame,
                                             0);
     if (decodeLen > 0) {
-        // Bass energy analysis: process PCM data BEFORE releasing the critical section.
-        // This is pure C++ computation with no JNI calls, safe in critical region.
-        int bassIntensity = 0;
-        int bassLowFreqRatio = 50;
-        int bassReady = bass_energy_process_frame((const int16_t*)decodedData, decodeLen, &bassIntensity, &bassLowFreqRatio);
+        // Decide whether to retain this PCM frame before audio-derived analysis.
+        // Keeping the backlog gate here guarantees that the haptics pipeline
+        // observe exactly the same frames that are handed to AudioTrack. Previously
+        // AndroidAudioRenderer dropped the frame after haptics had already processed
+        // it, which made vibration drift from the sound during network bursts.
+        int pendingAudioDurationMs = LiGetPendingAudioDuration();
+        if (pendingAudioDurationMs >= AUDIO_BACKLOG_DROP_THRESHOLD_MS) {
+            (*env)->ReleasePrimitiveArrayCritical(
+                env, DecodedAudioBuffer, decodedData, JNI_ABORT);
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                "moonlight-jni",
+                "Too much pending audio data: %d ms",
+                pendingAudioDurationMs);
+            return;
+        }
+
+        // Feed retained PCM directly into the project-owned audio haptics SDK.
+        // The adapter performs no JNI calls while the critical array is held.
+        audio_haptics_android_adapter_process_frame(
+            (const int16_t*)decodedData,
+            decodeLen);
 
         // We must release the array elements before making further JNI calls
         (*env)->ReleasePrimitiveArrayCritical(env, DecodedAudioBuffer, decodedData, 0);
 
         (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeArPlaySampleMethod, DecodedAudioBuffer);
+        audio_haptics_android_adapter_notify();
         if ((*env)->ExceptionCheck(env)) {
             // We will crash here
             (*JVM)->DetachCurrentThread(JVM);
-        }
-
-        // Report bass energy to Java (outside critical section)
-        if (bassReady && BridgeBassEnergyMethod != NULL) {
-            (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeBassEnergyMethod, bassIntensity, bassLowFreqRatio);
-            if ((*env)->ExceptionCheck(env)) {
-                (*env)->ExceptionClear(env);
-            }
         }
     }
     else {
@@ -415,16 +440,15 @@ void BridgeClConnectionStatusUpdate(int connectionStatus) {
     }
 }
 
-void BridgeClSetHdrMode(bool enabled) {
+void BridgeClSetHdrMode(bool enabled, void* hdrMetadata) {
     JNIEnv* env = GetThreadEnv();
 
     jbyteArray hdrMetadataByteArray = NULL;
-    SS_HDR_METADATA hdrMetadata;
 
     // Check if HDR metadata was provided
-    if (enabled && LiGetHdrMetadata(&hdrMetadata)) {
+    if (enabled && hdrMetadata != NULL) {
         hdrMetadataByteArray = (*env)->NewByteArray(env, sizeof(SS_HDR_METADATA));
-        (*env)->SetByteArrayRegion(env, hdrMetadataByteArray, 0, sizeof(SS_HDR_METADATA), (jbyte*)&hdrMetadata);
+        (*env)->SetByteArrayRegion(env, hdrMetadataByteArray, 0, sizeof(SS_HDR_METADATA), (jbyte*)hdrMetadata);
     }
 
     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetHdrModeMethod, enabled, hdrMetadataByteArray);
@@ -447,6 +471,40 @@ void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short left
     }
 }
 
+void BridgeClSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags,
+                                 uint8_t typeLeft, uint8_t typeRight,
+                                 uint8_t* left, uint8_t* right) {
+    JNIEnv* env = GetThreadEnv();
+    jbyteArray leftArray = (*env)->NewByteArray(env, DS_EFFECT_PAYLOAD_SIZE);
+    if (leftArray == NULL) {
+        (*env)->ExceptionClear(env);
+        return;
+    }
+    jbyteArray rightArray = (*env)->NewByteArray(env, DS_EFFECT_PAYLOAD_SIZE);
+    if (rightArray == NULL) {
+        (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, leftArray);
+        return;
+    }
+
+    (*env)->SetByteArrayRegion(env, leftArray, 0, DS_EFFECT_PAYLOAD_SIZE, (const jbyte*)left);
+    (*env)->SetByteArrayRegion(env, rightArray, 0, DS_EFFECT_PAYLOAD_SIZE, (const jbyte*)right);
+    if (!(*env)->ExceptionCheck(env)) {
+        // Casts to signed types are required for CheckJNI; see BridgeClRumble.
+        (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetAdaptiveTriggersMethod,
+                                     (jshort)controllerNumber, (jbyte)eventFlags,
+                                     (jbyte)typeLeft, (jbyte)typeRight,
+                                     leftArray, rightArray);
+    }
+
+    (*env)->DeleteLocalRef(env, rightArray);
+    (*env)->DeleteLocalRef(env, leftArray);
+    if ((*env)->ExceptionCheck(env)) {
+        // We will crash here
+        (*JVM)->DetachCurrentThread(JVM);
+    }
+}
+
 void BridgeClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz) {
     JNIEnv* env = GetThreadEnv();
 
@@ -462,6 +520,43 @@ void BridgeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, u
 
     // These jbyte casts are necessary to satisfy CheckJNI
     (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClSetControllerLEDMethod, controllerNumber, (jbyte)r, (jbyte)g, (jbyte)b);
+    if ((*env)->ExceptionCheck(env)) {
+        // We will crash here
+        (*JVM)->DetachCurrentThread(JVM);
+    }
+}
+
+void BridgeClDs5HapticsPcm(const LI_DS5_HAPTICS_PCM_FRAME* frame) {
+    JNIEnv* env = GetThreadEnv();
+
+    // Zero-length frames are valid: common-c uses them to carry lifecycle
+    // flags (STREAM_END / DISCONTINUITY) so the client can flush.
+    if (frame == NULL || (frame->pcmDataLength != 0 && frame->pcmData == NULL)) {
+        return;
+    }
+
+    // Copy the PCM data out of the callback-owned buffer. The callback is
+    // invoked on the control receive thread and the frame pointer is only
+    // valid during the call.
+    jbyteArray pcm = (*env)->NewByteArray(env, (jsize)frame->pcmDataLength);
+    if (pcm == NULL) {
+        (*env)->ExceptionClear(env);
+        return;
+    }
+    if (frame->pcmDataLength > 0) {
+        (*env)->SetByteArrayRegion(env, pcm, 0, (jsize)frame->pcmDataLength,
+                                   (const jbyte*)frame->pcmData);
+    }
+    if (!(*env)->ExceptionCheck(env)) {
+        (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClDs5HapticsPcmMethod,
+                                     (jshort)frame->controllerNumber, (jbyte)frame->flags,
+                                     (jint)frame->sequenceNumber, (jlong)frame->presentationTimeUs,
+                                     (jint)frame->sampleRate, (jint)frame->frameCount,
+                                     (jbyte)frame->channelCount, (jbyte)frame->bitsPerSample,
+                                     pcm);
+    }
+
+    (*env)->DeleteLocalRef(env, pcm);
     if ((*env)->ExceptionCheck(env)) {
         // We will crash here
         (*JVM)->DetachCurrentThread(JVM);
@@ -506,11 +601,84 @@ void BridgeClClipboardData(const char* data, int length) {
     }
 }
 
+void BridgeClCursorUpdate(const LI_CURSOR_UPDATE* update) {
+    JNIEnv* env = GetThreadEnv();
+    jbyteArray pixels = NULL;
+
+    if (update == NULL) {
+        return;
+    }
+
+    if ((update->flags & LI_CURSOR_UPDATE_FLAG_SHAPE) != 0 &&
+            update->pixels != NULL && update->pixelDataLength > 0) {
+        pixels = (*env)->NewByteArray(env, (jsize)update->pixelDataLength);
+        if (pixels == NULL) {
+            (*env)->ExceptionClear(env);
+            return;
+        }
+        (*env)->SetByteArrayRegion(env, pixels, 0, (jsize)update->pixelDataLength,
+                                   (const jbyte*)update->pixels);
+    }
+
+    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClCursorUpdateMethod,
+                                 (jint)update->flags,
+                                 (jint)update->shapeId,
+                                 (jint)update->width,
+                                 (jint)update->height,
+                                 (jint)update->hotspotX,
+                                 (jint)update->hotspotY,
+                                 pixels);
+    if (pixels != NULL) {
+        (*env)->DeleteLocalRef(env, pixels);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*JVM)->DetachCurrentThread(JVM);
+    }
+}
+
 void BridgeClLogMessage(const char* format, ...) {
     va_list va;
     va_start(va, format);
     __android_log_vprint(ANDROID_LOG_INFO, "moonlight-common-c", format, va);
     va_end(va);
+}
+
+void BridgeClRemoteTextContext(const LI_REMOTE_TEXT_CONTEXT* context) {
+    JNIEnv* env = GetThreadEnv();
+    jint values[] = {
+        context->flags,
+        context->revision,
+        context->source,
+        context->cause,
+        context->anchorX,
+        context->anchorY,
+        context->elementLeft,
+        context->elementTop,
+        context->elementRight,
+        context->elementBottom,
+        context->caretLeft,
+        context->caretTop,
+        context->caretRight,
+        context->caretBottom,
+        context->captureWidth,
+        context->captureHeight,
+    };
+    jintArray array = (*env)->NewIntArray(env, sizeof(values) / sizeof(values[0]));
+    if (array == NULL) {
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
+        return;
+    }
+
+    (*env)->SetIntArrayRegion(env, array, 0, sizeof(values) / sizeof(values[0]), values);
+    (*env)->CallStaticVoidMethod(env, GlobalBridgeClass, BridgeClRemoteTextContextMethod,
+                                 array, (jlong)context->activationId, (jlong)context->inputToken);
+    (*env)->DeleteLocalRef(env, array);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
 }
 
 static DECODER_RENDERER_CALLBACKS BridgeVideoRendererCallbacks = {
@@ -543,8 +711,12 @@ static CONNECTION_LISTENER_CALLBACKS BridgeConnListenerCallbacks = {
         .rumbleTriggers = BridgeClRumbleTriggers,
         .setMotionEventState = BridgeClSetMotionEventState,
         .setControllerLED = BridgeClSetControllerLED,
+        .setAdaptiveTriggers = BridgeClSetAdaptiveTriggers,
+        // Set per connection below, only with a client-side rumble fallback.
+        .ds5HapticsPcm = NULL,
         .resolutionChanged = BridgeClResolutionChanged,
         .clipboardData = BridgeClClipboardData,
+        .cursorUpdate = BridgeClCursorUpdate,
 };
 
 static bool
@@ -571,6 +743,27 @@ hasFastAes() {
 }
 
 JNIEXPORT jint JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_getNegotiatedDynamicHdrFormat(JNIEnv *env, jclass clazz) {
+    return LiGetNegotiatedDynamicHdrFormat();
+}
+
+// Sunshine dynamic HDR negotiation state, staged by setDynamicHdrNegotiation()
+// before the connection starts. Zero defaults are the legacy client.
+static int s_dynamicHdrCaps;
+static int s_dynamicHdrDirectSurface;
+static int s_dynamicHdrPreference;
+
+JNIEXPORT void JNICALL
+Java_com_limelight_nvstream_jni_MoonBridge_setDynamicHdrNegotiation(JNIEnv *env, jclass clazz,
+                                                                    jint caps,
+                                                                    jint dolbyVisionDirectSurface,
+                                                                    jint dynamicHdrPreference) {
+    s_dynamicHdrCaps = caps;
+    s_dynamicHdrDirectSurface = dolbyVisionDirectSurface;
+    s_dynamicHdrPreference = dynamicHdrPreference;
+}
+
+JNIEXPORT jint JNICALL
 Java_com_limelight_nvstream_jni_MoonBridge_startConnection(JNIEnv *env, jclass clazz,
                                                            jstring address, jstring appVersion, jstring gfeVersion,
                                                            jstring rtspSessionUrl, jint serverCodecModeSupport,
@@ -582,7 +775,7 @@ Java_com_limelight_nvstream_jni_MoonBridge_startConnection(JNIEnv *env, jclass c
                                                            jint videoCapabilities,
                                                            jint colorSpace, jint colorRange, jint hdrMode,
                                                            jboolean enableMic, jboolean controlOnly,
-                                                           jint audioCodec, jint audioBitrate) {
+                                                           jint audioCodec, jint audioBitrate, jboolean authoredPcmHaptics) {
     SERVER_INFORMATION serverInfo = {
             .address = (*env)->GetStringUTFChars(env, address, 0),
             .serverInfoAppVersion = (*env)->GetStringUTFChars(env, appVersion, 0),
@@ -607,8 +800,18 @@ Java_com_limelight_nvstream_jni_MoonBridge_startConnection(JNIEnv *env, jclass c
             .enableMic = enableMic,
             .controlOnly = controlOnly,
             .audioCodec = audioCodec,
-            .audioBitrate = audioBitrate
+            .audioBitrate = audioBitrate,
+            .dynamicHdrCaps = s_dynamicHdrCaps,
+            .dolbyVisionDirectSurface = s_dynamicHdrDirectSurface,
+            .dynamicHdrPreference = s_dynamicHdrPreference
     };
+
+    // Consume the staged negotiation state so it never leaks into a later
+    // connection that skipped the setter (per-connection semantics, no
+    // reliance on caller discipline).
+    s_dynamicHdrCaps = 0;
+    s_dynamicHdrDirectSurface = 0;
+    s_dynamicHdrPreference = 0;
 
     jbyte* riAesKeyBuf = (*env)->GetByteArrayElements(env, riAesKey, NULL);
     memcpy(streamConfig.remoteInputAesKey, riAesKeyBuf, sizeof(streamConfig.remoteInputAesKey));
@@ -625,9 +828,12 @@ Java_com_limelight_nvstream_jni_MoonBridge_startConnection(JNIEnv *env, jclass c
         streamConfig.encryptionFlags = ENCFLG_ALL;
     }
 
+    CONNECTION_LISTENER_CALLBACKS connectionCallbacks = BridgeConnListenerCallbacks;
+    connectionCallbacks.ds5HapticsPcm = authoredPcmHaptics ? BridgeClDs5HapticsPcm : NULL;
+
     int ret = LiStartConnection(&serverInfo,
                                 &streamConfig,
-                                &BridgeConnListenerCallbacks,
+                                &connectionCallbacks,
                                 &BridgeVideoRendererCallbacks,
                                 &BridgeAudioRendererCallbacks,
                                 NULL, 0,

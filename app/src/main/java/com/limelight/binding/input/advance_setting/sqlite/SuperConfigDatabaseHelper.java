@@ -17,9 +17,12 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
+import com.google.gson.annotations.SerializedName;
 import com.limelight.binding.input.advance_setting.config.PageConfigController;
+import com.limelight.binding.input.advance_setting.DirectConfigTransfer;
 import com.limelight.binding.input.advance_setting.element.DigitalSwitchButton;
 import com.limelight.binding.input.advance_setting.element.Element;
+import com.limelight.utils.ConfigurationSyncScheduler;
 import com.limelight.utils.MathUtils;
 
 import java.lang.reflect.Type;
@@ -32,9 +35,13 @@ import java.util.regex.Pattern;
 
 public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
     private class ExportFile {
+        @SerializedName("version")
         private int version;
+        @SerializedName("settings")
         private String settings;
+        @SerializedName("elements")
         private String elements;
+        @SerializedName("md5")
         private String md5;
 
         public ExportFile(int version, String settings, String elements) {
@@ -141,11 +148,13 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
     private static final int DATABASE_OLD_VERSION_6 = 6;
     private static final int DATABASE_OLD_VERSION_8 = 8;
     private static final int DATABASE_VERSION = 9;
+    private final Context context;
     private SQLiteDatabase writableDataBase;
     private SQLiteDatabase readableDataBase;
 
     public SuperConfigDatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
+        this.context = context.getApplicationContext();
         writableDataBase = getWritableDatabase();
         readableDataBase = getReadableDatabase();
     }
@@ -350,6 +359,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
 
     public void insertElement(ContentValues values) {
         writableDataBase.insert("element", null, values);
+        notifyConfigSyncChanged();
     }
 
     public void deleteElement(long configId, long elementId) {
@@ -361,6 +371,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
 
         // 执行删除操作
         writableDataBase.delete("element", selection, selectionArgs);
+        notifyConfigSyncChanged();
     }
 
     public void updateElement(long configId, long elementId, ContentValues values) {
@@ -376,6 +387,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
                 selection, // WHERE 子句
                 selectionArgs // WHERE 子句中的占位符值
         );
+        notifyConfigSyncChanged();
     }
 
     public List<Long> queryAllElementIds(long configId) {
@@ -511,6 +523,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
     public void insertConfig(ContentValues values) {
 
         writableDataBase.insert("config", null, values);
+        notifyConfigSyncChanged();
 
     }
 
@@ -526,6 +539,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
 
         //删除element表中所有的config_id的element
         writableDataBase.delete("element", selection, selectionArgs);
+        notifyConfigSyncChanged();
 
     }
 
@@ -543,7 +557,12 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
                 selectionArgs // WHERE 子句中的占位符值
         );
 
+        notifyConfigSyncChanged();
 
+    }
+
+    private void notifyConfigSyncChanged() {
+        ConfigurationSyncScheduler.requestSyncSoon(context);
     }
 
     public List<Long> queryAllConfigIds() {
@@ -752,6 +771,14 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
      * @return 0表示成功，负数表示不同的错误代码。
      */
     public int importConfig(String configString) {
+        return importConfig(configString, false);
+    }
+
+    public int importConfigForBackup(String configString) {
+        return importConfig(configString, true);
+    }
+
+    private int importConfig(String configString, boolean fromBackup) {
         GsonBuilder gsonBuilder = new GsonBuilder();
         gsonBuilder.registerTypeAdapter(ContentValues.class, new ContentValuesSerializer());
         Gson gson = gsonBuilder.create();
@@ -779,6 +806,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
 
         ContentValues settingValues = gson.fromJson(settingString, ContentValues.class);
         ContentValues[] elements = gson.fromJson(elementsString, ContentValues[].class);
+        sanitizeDirectConfigActions(elements, fromBackup);
 
         // --- 预处理，建立从旧ID到内存中ContentValues对象的映射 ---
         Map<Long, ContentValues> oldIdToObjectMap = new HashMap<>();
@@ -893,6 +921,7 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
         String elementsString = exportFile.getElements();
 
         ContentValues[] elements = gson.fromJson(elementsString, ContentValues[].class);
+        sanitizeDirectConfigActions(elements, false);
 
         // 将组按键及其子按键存储在MAP中
         Map<ContentValues, List<ContentValues>> groupButtonMaps = new HashMap<>();
@@ -938,6 +967,44 @@ public class SuperConfigDatabaseHelper extends SQLiteOpenHelper {
         }
 
         return 0;
+    }
+
+    private void sanitizeDirectConfigActions(ContentValues[] elements, boolean fromBackup) {
+        for (ContentValues element : elements) {
+            for (String field : DirectConfigTransfer.FIELDS) {
+                Object value = element.get(field);
+                if (value instanceof String) {
+                    element.put(field, DirectConfigTransfer.forImport((String) value, fromBackup));
+                }
+            }
+        }
+    }
+
+    public void restoreDirectConfigActions(long configId, Map<Long, Long> replacements,
+                                           Map<String, Long> profiles) {
+        // Most profiles have no cross-config actions. Do not scan every element on each sync.
+        StringBuilder filter = new StringBuilder("config_id = ? AND (");
+        for (String field : DirectConfigTransfer.FIELDS) {
+            if (filter.charAt(filter.length() - 1) != '(') filter.append(" OR ");
+            filter.append(field).append(" LIKE '%DCS:%'");
+        }
+        filter.append(')');
+        List<Long> affectedIds = new ArrayList<>();
+        try (Cursor cursor = readableDataBase.query("element", new String[]{Element.COLUMN_LONG_ELEMENT_ID},
+                filter.toString(), new String[]{String.valueOf(configId)}, null, null, null)) {
+            while (cursor.moveToNext()) affectedIds.add(cursor.getLong(0));
+        }
+        for (Long elementId : affectedIds) {
+            Map<String, Object> element = queryAllElementAttributes(configId, elementId);
+            ContentValues changes = new ContentValues();
+            for (String field : DirectConfigTransfer.FIELDS) {
+                Object value = element.get(field);
+                if (!(value instanceof String)) continue;
+                String restored = DirectConfigTransfer.restoreValue((String) value, replacements, profiles);
+                if (!restored.equals(value)) changes.put(field, restored);
+            }
+            if (changes.size() > 0) updateElement(configId, elementId, changes);
+        }
     }
 
 

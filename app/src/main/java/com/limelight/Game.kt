@@ -1,15 +1,25 @@
 @file:Suppress("DEPRECATION")
 package com.limelight
 
+import com.limelight.ui.ThemedComponentActivity
+import com.limelight.binding.input.driver.UsbWaveformBackends
+
+import android.hardware.usb.UsbManager
+
 import com.limelight.binding.PlatformBinding
 import com.limelight.binding.audio.AndroidAudioRenderer
 import com.limelight.binding.audio.AudioDiagnostics
+import com.limelight.binding.audio.AudioHapticsRuntimePolicy
+import com.limelight.binding.audio.AudioHapticsSettings
 import com.limelight.binding.audio.AudioVibrationService
+import com.limelight.binding.audio.MicrophoneButtonPositionController
 import com.limelight.binding.audio.MicrophoneManager
 import com.limelight.binding.input.ControllerHandler
 import com.limelight.binding.input.GameInputDevice
 import com.limelight.binding.input.KeyboardTranslator
+import com.limelight.binding.input.StartWheelAction
 import com.limelight.binding.input.advance_setting.ControllerManager
+import com.limelight.binding.input.advance_setting.CrownConfigPickerDialog
 import com.limelight.binding.input.advance_setting.KeyboardUIController
 import com.limelight.binding.input.capture.InputCaptureManager
 import com.limelight.binding.input.capture.InputCaptureProvider
@@ -20,15 +30,27 @@ import com.limelight.binding.input.touch.TouchContext
 import com.limelight.binding.input.driver.UsbDriverService
 import com.limelight.binding.input.evdev.EvdevListener
 import com.limelight.binding.input.virtual_controller.VirtualController
+import com.limelight.binding.video.DolbyVisionCapabilityProbe
 import com.limelight.binding.video.MediaCodecDecoderRenderer
+import com.limelight.framegen.FramegenCapture
+import com.limelight.framegen.FramegenAdaptiveController
+import com.limelight.framegen.FramegenInterceptor
+import com.limelight.framegen.FramegenPerformanceEnricher
+import com.limelight.framegen.FramegenRuntimeConfig
+import com.limelight.framegen.FramegenRuntimePlanner
+import com.limelight.gamemenu.GameMenu
 import com.limelight.binding.video.MediaCodecHelper
 import com.limelight.binding.video.PerfOverlayListener
 import com.limelight.binding.video.PerformanceInfo
 import com.limelight.nvstream.NvConnection
 import com.limelight.nvstream.StreamConfiguration
+import com.limelight.nvstream.Ds5HapticsPcmFrame
+import com.limelight.nvstream.HdrModePolicy
+import com.limelight.nvstream.ColorRangePolicy
 import com.limelight.nvstream.http.ComputerDetails
 import com.limelight.nvstream.http.AdaptiveBitrateService
 import com.limelight.nvstream.NvConnectionListener
+import com.limelight.nvstream.RemoteTextContext
 import com.limelight.nvstream.http.NvApp
 import com.limelight.nvstream.http.NvHTTP
 import com.limelight.nvstream.input.ClipboardSyncManager
@@ -38,20 +60,23 @@ import com.limelight.preferences.GlPreferences
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.services.StreamNotificationService
 import com.limelight.ui.CursorView
+import com.limelight.ui.Ds5TouchpadFeedbackView
 import com.limelight.ui.GameGestures
+import com.limelight.ui.GameMenuAxisSourceLifecycle
 import com.limelight.ui.StreamView
+import com.limelight.ui.StartHoldWheelOverlay
 import com.limelight.utils.Dialog
 import com.limelight.utils.PanZoomHandler
+import com.limelight.utils.RemoteImeController
 import com.limelight.utils.FullscreenProgressOverlay
+import com.limelight.utils.HdrCapabilityHelper
 import com.limelight.utils.UiHelper
-import com.limelight.utils.NetHelper
 import com.limelight.utils.AnalyticsManager
 import com.limelight.utils.AppCacheManager
 import com.limelight.utils.AppSettingsManager
 import com.limelight.services.KeyboardAccessibilityService
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.ComponentName
 import android.content.Intent
@@ -64,11 +89,11 @@ import android.graphics.Rect
 import android.hardware.input.InputManager
 import android.media.AudioManager
 import android.net.ConnectivityManager
-import android.net.TrafficStats
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.preference.PreferenceManager
 import android.util.Rational
 import android.view.Display
@@ -82,6 +107,9 @@ import android.view.View.OnGenericMotionListener
 import android.view.View.OnSystemUiVisibilityChangeListener
 import android.view.View.OnTouchListener
 import android.view.Window
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnPreDraw
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.view.inputmethod.InputMethodManager
@@ -98,13 +126,23 @@ import java.security.cert.CertificateException
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 
-class Game : Activity(), SurfaceHolder.Callback,
+class Game : ThemedComponentActivity(), SurfaceHolder.Callback,
     OnGenericMotionListener, OnTouchListener, NvConnectionListener, EvdevListener,
-    OnSystemUiVisibilityChangeListener, GameGestures, StreamView.InputCallbacks,
+    OnSystemUiVisibilityChangeListener, GameGestures, GameMenuAxisSourceLifecycle,
+    StreamView.InputCallbacks,
     PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener,
     KeyboardAccessibilityService.KeyEventCallback {
 
@@ -115,7 +153,10 @@ class Game : Activity(), SurfaceHolder.Callback,
     lateinit var touchInputHandler: TouchInputHandler
     var virtualController: VirtualController? = null
     lateinit var panZoomHandler: PanZoomHandler
+    private lateinit var remoteImeController: RemoteImeController
+    @Volatile private var destroying = false
     private var audioVibrationService: AudioVibrationService? = null
+    private var appliedAudioHapticsSettings: AudioHapticsSettings? = null
 
     interface PerformanceInfoDisplay {
         fun display(performanceAttrs: Map<String, String>)
@@ -128,6 +169,7 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     var microphoneManager: MicrophoneManager? = null
     var micButton: ImageButton? = null
+    private var micButtonPositionController: MicrophoneButtonPositionController? = null
     lateinit var prefConfig: PreferenceConfiguration
     lateinit var orientationManager: OrientationManager
     private lateinit var tombstonePrefs: SharedPreferences
@@ -145,7 +187,51 @@ class Game : Activity(), SurfaceHolder.Callback,
     var displayedFailureDialog = false
     var connecting = false
     var connected = false
+    private var usbForwarding: UsbForwardingController? = null
+    private var usbForwardingCreationPending = false
+
+
+    fun showUsbForwarding(onShown: ((android.app.Dialog) -> Unit)? = null) {
+        if (!connected) return
+        if (usbForwarding == null) {
+            val previousCleanup = UsbForwardingController.previousCleanup()
+            if (!previousCleanup.isDone || previousCleanup.isFailed) {
+                if (!usbForwardingCreationPending) {
+                    usbForwardingCreationPending = true
+                    previousCleanup.whenComplete { error ->
+                        runOnUiThread {
+                            usbForwardingCreationPending = false
+                            if (!isDestroyed && connected) {
+                                if (error == null) showUsbForwarding(onShown)
+                                else Toast.makeText(this, R.string.usb_forward_failed, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+                return
+            }
+            val cert = parseServerCert()
+            val hostId = computerUuid
+            if (cert == null || hostId.isNullOrBlank()) {
+                Toast.makeText(this, R.string.usb_forward_unconfigured, Toast.LENGTH_LONG).show()
+                return
+            }
+            usbForwarding = UsbForwardingController(this, intent.getStringExtra(EXTRA_HOST) ?: "",
+                cert, PlatformBinding.getCryptoProvider(this), hostId) { conn?.createNvHttp() }
+        }
+        usbForwarding?.show()?.let { onShown?.invoke(it) }
+    }
     private var activeGameMenu: GameMenu? = null
+    private var crownConfigPicker: CrownConfigPickerDialog? = null
+    private var controllerShortcutHintView: View? = null
+    private var startHoldWheelView: ComposeView? = null
+    private val startHoldWheelVisible = mutableStateOf(false)
+    private val startHoldWheelSelection = mutableStateOf(StartWheelAction.CONTINUE)
+    private val pipInteractiveOverlayState = PipInteractiveOverlayState()
+    /** Preserve virtual-controller visibility across OEM-specific stop/PiP callback ordering. */
+    private var virtualControllerVisibleBeforeStop: Boolean? = null
+    private var pendingPipExitSnapshot: PipInteractiveOverlaySnapshot? = null
+    private var pipOverlayRestoreGeneration = 0L
     private var autoEnterPip = false
     private var surfaceCreated = false
     var attemptedConnection = false
@@ -159,6 +245,7 @@ class Game : Activity(), SurfaceHolder.Callback,
     var appName: String? = null
     lateinit var app: NvApp
     private var desiredRefreshRate = 0f
+    private var selectedDisplayMode: DisplayModeManager.DisplayModeSelection? = null
     var appSettingsManager: AppSettingsManager? = null
     var computerUuid: String? = null
 
@@ -166,18 +253,40 @@ class Game : Activity(), SurfaceHolder.Callback,
     var grabbedInput = true
     var cursorVisible = false
     lateinit var streamView: StreamView
-    private var externalStreamView: StreamView? = null
-    private var previousTimeMillis: Long = 0
-    private var previousRxBytes: Long = 0
+    var ds5TouchpadFeedbackView: Ds5TouchpadFeedbackView? = null
 
+    /** Host support for controller touch, learned from the first touch packet of a stream. */
+    enum class ScreenDs5HostSupport { UNKNOWN, SUPPORTED, UNSUPPORTED }
+
+    @Volatile
+    var screenDs5TouchpadHostSupport = ScreenDs5HostSupport.UNKNOWN
+        private set
+
+    fun setScreenDs5TouchpadHostSupport(supported: Boolean) {
+        screenDs5TouchpadHostSupport =
+            if (supported) ScreenDs5HostSupport.SUPPORTED else ScreenDs5HostSupport.UNSUPPORTED
+    }
+
+    private var externalStreamView: StreamView? = null
     lateinit var notificationOverlayManager: NotificationOverlayManager
     private var performanceOverlayManager: PerformanceOverlayManager? = null
+    private var jitterMonitorManager: JitterMonitorManager? = null
     lateinit var cursorServiceManager: CursorServiceManager
     lateinit var floatBallHandler: FloatBallHandler
     lateinit var connectionCallbackHandler: ConnectionCallbackHandler
     lateinit var keyboardInputHandler: KeyboardInputHandler
 
     private var decoderRenderer: MediaCodecDecoderRenderer? = null
+    private var framegenCapture: FramegenCapture? = null
+    private val framegenAdaptiveController = FramegenAdaptiveController()
+    private val framegenSurfaceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "FramegenSurface").apply { isDaemon = true }
+    }
+    private val framegenSurfaceGeneration = AtomicInteger(0)
+    private var framegenInputHdrEnabled = false
+    /** Final HDR decision after display and decoder capability negotiation. */
+    private var negotiatedHdrEnabled = false
+    private var framegenEnabledToastShown = false
     private var reportedCrash = false
 
     private var highPerfWifiLock: WifiManager.WifiLock? = null
@@ -190,12 +299,14 @@ class Game : Activity(), SurfaceHolder.Callback,
     private var audioRenderer: com.limelight.binding.audio.SmartAudioRenderer? = null
 
     enum class BackKeyMenuMode {
-        GAME_MENU, CROWN_MODE, NO_MENU
+        GAME_MENU, CROWN_MODE, NO_MENU, NO_MENU_LOCKED
     }
 
     fun setcurrentBackKeyMenu(currentBackKeyMenu: BackKeyMenuMode) {
         crownSessionController.setBackKeyMenuMode(currentBackKeyMenu)
     }
+
+    fun getCurrentBackKeyMenuMode(): BackKeyMenuMode = crownSessionController.backKeyMenuMode
 
     fun toggleVirtualControllerVisibility() {
         crownSessionController.toggleElementsVisibility()
@@ -213,13 +324,21 @@ class Game : Activity(), SurfaceHolder.Callback,
         this.isTouchOverrideEnabled = isTouchOverrideEnabled
     }
 
+    // 仅鼠标移动模式：禁用所有屏幕触摸产生的鼠标点击事件，只保留鼠标移动
+    var isMouseMoveOnlyEnabled = false
+        private set
+
+    fun toggleMouseMoveOnly() {
+        isMouseMoveOnlyEnabled = !isMouseMoveOnlyEnabled
+    }
+
     var usbDriverServiceManager: UsbDriverServiceManager? = null
     var externalDisplayManager: ExternalDisplayManager? = null
+    private lateinit var targetDisplayResolver: TargetDisplayResolver
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        cancelKeepAliveNotification()
         isChangingResolution = false
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -240,7 +359,11 @@ class Game : Activity(), SurfaceHolder.Callback,
         setContentView(R.layout.activity_game)
         window.decorView.findViewById<View>(android.R.id.content).isFocusable = true
 
-        prefConfig = PreferenceConfiguration.readPreferences(this)
+        targetDisplayResolver = TargetDisplayResolver(this)
+        val initialTargetDisplay = targetDisplayResolver.resolve(
+            PreferenceConfiguration.isExternalDisplayEnabled(this)
+        )
+        prefConfig = PreferenceConfiguration.readPreferences(this, initialTargetDisplay)
         orientationManager = OrientationManager(
             this,
             prefConfig.width,
@@ -266,11 +389,6 @@ class Game : Activity(), SurfaceHolder.Callback,
         if (customScreenMode != -1) {
             prefConfig.screenCombinationMode = customScreenMode
         }
-        val customVddScreenMode = intent.getIntExtra(EXTRA_VDD_SCREEN_COMBINATION_MODE, -1)
-        if (customVddScreenMode != -1) {
-            prefConfig.vddScreenCombinationMode = customVddScreenMode
-        }
-
         NativeTouchContext.INTIAL_ZONE_PIXELS = prefConfig.longPressflatRegionPixels.toFloat()
         NativeTouchContext.ENABLE_ENHANCED_TOUCH = prefConfig.enableEnhancedTouch
         NativeTouchContext.ENHANCED_TOUCH_ON_RIGHT = if (prefConfig.enhancedTouchOnWhichSide) -1 else 1
@@ -280,7 +398,10 @@ class Game : Activity(), SurfaceHolder.Callback,
         orientationManager.setPreferredOrientation()
 
         if (prefConfig.stretchVideo || DisplayModeManager.shouldIgnoreInsetsForResolution(
-                windowManager.defaultDisplay, prefConfig.width, prefConfig.height
+                currentTargetDisplay,
+                prefConfig.width,
+                prefConfig.height,
+                prefConfig.usesNativeDisplayMode
             )
         ) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -296,8 +417,15 @@ class Game : Activity(), SurfaceHolder.Callback,
         streamView.setOnGenericMotionListener(this)
         streamView.setOnKeyListener(this)
         streamView.setInputCallbacks(this)
+        installStartHoldWheelOverlay(streamView.parent as FrameLayout)
 
-        panZoomHandler = PanZoomHandler(this, this, streamView, prefConfig)
+        if (prefConfig.screenDs5Touchpad) {
+            addDs5TouchpadFeedbackView()
+        }
+
+        val cursorOverlayView = findViewById<CursorView>(R.id.cursorOverlay)
+        panZoomHandler = PanZoomHandler(this, this, streamView, cursorOverlayView, prefConfig)
+        remoteImeController = RemoteImeController(this, streamView, panZoomHandler)
 
         val backgroundTouchView = findViewById<View>(R.id.backgroundTouchView)
         backgroundTouchView.setOnTouchListener(this)
@@ -316,17 +444,27 @@ class Game : Activity(), SurfaceHolder.Callback,
             findViewById(R.id.notificationOverlay),
             findViewById(R.id.notificationText)
         ) { prefConfig.bitrate }
+        controllerShortcutHintView = findViewById(R.id.controllerShortcutHint)
 
         micButton = findViewById(R.id.micButton)
+        micButtonPositionController = micButton?.let {
+            MicrophoneButtonPositionController.attach(this, it)
+        }
 
-        performanceOverlayManager = PerformanceOverlayManager(this, prefConfig)
+        performanceOverlayManager = PerformanceOverlayManager(this, prefConfig) { enabled ->
+            jitterMonitorManager?.setEnabled(enabled)
+        }
         performanceOverlayManager?.initialize()
+
+        jitterMonitorManager = JitterMonitorManager(this, prefConfig)
+        jitterMonitorManager?.initialize()
 
         inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener { _, event ->
-                touchInputHandler.handleMotionEvent(null, event)
+                usbForwarding?.consumes(event.device) == true ||
+                    touchInputHandler.handleMotionEvent(getMotionEventTargetView(), event)
             }
         }
 
@@ -384,17 +522,30 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         audioVibrationService = AudioVibrationService(this)
         audioVibrationService?.controllerHandler = controllerHandler
+        bindAudioHapticsTouchArbitration()
+        audioVibrationService?.detachSystemAudioHaptics = {
+            audioRenderer?.detachSystemAudioHaptics() == true
+        }
+        audioVibrationService?.attachSystemAudioHaptics = {
+            audioRenderer?.attachSystemAudioHaptics() == true
+        }
         audioVibrationService?.setSettings(
             prefConfig.enableAudioVibration,
             prefConfig.audioVibrationStrength,
             prefConfig.audioVibrationMode,
             prefConfig.audioVibrationScene
         )
-        MoonBridge.setBassEnergyListener { intensity, lowFreqRatio ->
-            audioVibrationService?.handleBassEnergy(intensity, lowFreqRatio)
-        }
-        MoonBridge.setBassEnergyEnabled(prefConfig.enableAudioVibration)
-        MoonBridge.setBassEnergySceneMode(prefConfig.audioVibrationScene)
+        appliedAudioHapticsSettings = AudioHapticsSettings(
+            enabled = prefConfig.enableAudioVibration,
+            strength = prefConfig.audioVibrationStrength,
+            mode = prefConfig.audioVibrationMode,
+            scene = prefConfig.audioVibrationScene
+        )
+        MoonBridge.setAudioHapticsSessionHandle(
+            audioVibrationService?.nativeSessionHandle ?: 0L
+        )
+        MoonBridge.setAudioHapticsSceneMode(prefConfig.audioVibrationScene)
+        updateAudioHapticsRuntimeEnabled(true)
 
         val inputManager = getSystemService(INPUT_SERVICE) as InputManager
         inputManager.registerInputDeviceListener(keyboardInputHandler.keyboardTranslator, null)
@@ -402,7 +553,6 @@ class Game : Activity(), SurfaceHolder.Callback,
         touchInputHandler = TouchInputHandler(this)
         touchInputHandler.initTouchContexts(conn!!, streamView, prefConfig)
 
-        val cursorOverlayView = findViewById<CursorView>(R.id.cursorOverlay)
         cursorServiceManager = CursorServiceManager(
             streamView, cursorOverlayView, prefConfig, touchInputHandler.relativeTouchContextMap,
             object : CursorServiceManager.UiCallback {
@@ -411,6 +561,13 @@ class Game : Activity(), SurfaceHolder.Callback,
                 }
                 override fun isActivityAlive(): Boolean {
                     return !isFinishing && !isDestroyed
+                }
+                override fun onLocalCursorFallback() {
+                    Toast.makeText(
+                        this@Game,
+                        R.string.toast_local_cursor_fallback,
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         )
@@ -428,14 +585,14 @@ class Game : Activity(), SurfaceHolder.Callback,
                 streamView.parent as FrameLayout,
                 this
             )
-            setupVirtualControllerGyro()
+            refreshVirtualControllerLayout()
         }
 
         if (prefConfig.enableCrownFeatures) {
             initializeControllerManager()
         }
 
-        if (prefConfig.usbDriver) {
+        if (prefConfig.usbDriver || prefConfig.dualSenseWirelessBridge || packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_USB_HOST)) {
             bindUsbDriverService()
         }
 
@@ -446,7 +603,7 @@ class Game : Activity(), SurfaceHolder.Callback,
             }
             Dialog.displayDialog(
                 this, resources.getString(R.string.conn_error_title),
-                "This device or ROM doesn't support hardware accelerated H.264 playback.", true
+                this.getString(R.string.error_h264_unsupported), true
             )
             return
         }
@@ -490,7 +647,10 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     /** Resolve the display currently used for rendering (external or built-in). */
     val currentTargetDisplay: Display
-        get() = externalDisplayManager?.getTargetDisplay() ?: windowManager.defaultDisplay
+        get() = targetDisplayResolver.currentDisplay()
+
+    /** Resolve the StreamView coordinate space for motion callbacks that don't pass a view. */
+    private fun getMotionEventTargetView(): StreamView = activeStreamView ?: streamView
 
     /** Re-point all absolute/relative touch contexts at [view]. */
     private fun retargetTouchContexts(view: StreamView?) {
@@ -578,16 +738,11 @@ class Game : Activity(), SurfaceHolder.Callback,
         }
     }
 
-    /** Set up gyro callbacks on the virtual controller. */
-    private fun setupVirtualControllerGyro() {
+    /** Refresh the on-screen controller layout after (re)creating the stream. */
+    private fun refreshVirtualControllerLayout() {
         val vc = virtualController ?: return
         vc.refreshLayout()
         vc.show()
-        vc.setGyroEnabled(!prefConfig.gyroToMouse)
-        controllerHandler.setVirtualControllerGyroCallbacks(
-            { vc.setGyroEnabled(false) },
-            { vc.setGyroEnabled(true) }
-        )
     }
 
     /** Whether the resume-stream preference is enabled. */
@@ -595,17 +750,37 @@ class Game : Activity(), SurfaceHolder.Callback,
         get() = PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("checkbox_resume_stream", false)
 
+    private fun shouldUseFramegen(prefs: SharedPreferences = defaultPreferences()): Boolean =
+        FramegenRuntimePlanner.shouldUse(prefs, prefConfig.width, prefConfig.height, prefConfig.fps)
+
+    private fun framegenPresentationFps(prefs: SharedPreferences = defaultPreferences()): Int =
+        FramegenRuntimePlanner.presentationFps(prefs, prefConfig.fps)
+
+    private fun defaultPreferences(): SharedPreferences =
+        PreferenceManager.getDefaultSharedPreferences(this)
+
     /**
      * Parse intent extras, build stream config, create NvConnection + ControllerHandler.
      * Shared by [onCreate] (first launch) and [prepareConnection] (resume reconnect).
      */
     private fun createConnectionAndHandler() {
+        usbForwarding?.close()
+        usbForwarding = null
+        framegenEnabledToastShown = false
+        if (::controllerHandler.isInitialized) {
+            audioVibrationService?.controllerHandler = null
+            controllerHandler.destroy()
+        }
         val host = intent.getStringExtra(EXTRA_HOST) ?: ""
         val port = intent.getIntExtra(EXTRA_PORT, NvHTTP.DEFAULT_HTTP_PORT)
         val httpsPort = intent.getIntExtra(EXTRA_HTTPS_PORT, 0)
         val uniqueId = intent.getStringExtra(EXTRA_UNIQUEID) ?: ""
         val pairName = intent.getStringExtra(EXTRA_PAIR_NAME) ?: ""
-        val pcUseVdd = intent.getBooleanExtra(EXTRA_PC_USEVDD, false)
+        val pcUseVdd = if (intent.hasExtra(EXTRA_PC_USEVDD)) {
+            intent.getBooleanExtra(EXTRA_PC_USEVDD, false)
+        } else {
+            null
+        }
         val displayName = intent.getStringExtra(EXTRA_DISPLAY_NAME)
         val forceResumeCurrentSession = intent.getBooleanExtra(EXTRA_FORCE_RESUME_CURRENT_SESSION, false)
         val serverCert = parseServerCert()
@@ -615,21 +790,40 @@ class Game : Activity(), SurfaceHolder.Callback,
         )
         val config = streamConfigResult.config
 
+        // Keep connection callbacks localized on API 22-32 where setLocale() updates
+        // the Activity resources without changing the process application context.
+        val connectionContext = applicationContext.createConfigurationContext(Configuration(resources.configuration))
         conn = NvConnection(
-            applicationContext,
+            connectionContext,
             ComputerDetails.AddressTuple(host, port),
             httpsPort, uniqueId, pairName, config,
             PlatformBinding.getCryptoProvider(this), serverCert, displayName, forceResumeCurrentSession
         )
         orientationManager.connection = conn
-        controllerHandler = ControllerHandler(this, conn!!, this, prefConfig)
+        controllerHandler = ControllerHandler(
+            this,
+            conn!!,
+            this,
+            prefConfig,
+            onTogglePerformanceOverlay = ::togglePerformanceOverlay,
+            onExitStream = ::exitStreamFromDriverShortcut
+        )
+        virtualController?.rebindControllerHandler(controllerHandler)
+        // Re-arm the persisted gyro assistant; a physical gamepad that shows up later
+        // re-runs this path once it claims controller 0.
+        controllerHandler.onSensorsReenabled()
     }
 
     /** Create or re-create ExternalDisplayManager with the standard callback. */
     private fun setupExternalDisplay() {
-        externalDisplayManager = ExternalDisplayManager(this, prefConfig, conn!!, decoderRenderer!!, pcName ?: "", appName ?: "")
-        externalDisplayManager?.callback = createExternalDisplayCallback()
-        externalDisplayManager?.initialize()
+        val manager = ExternalDisplayManager(
+            this,
+            prefConfig,
+            targetDisplayResolver
+        )
+        externalDisplayManager = manager
+        manager.callback = createExternalDisplayCallback()
+        manager.initialize(initialDisplayMode = selectedDisplayMode)
     }
 
     /** Bind or re-bind the USB driver service with the current controllerHandler. */
@@ -640,36 +834,120 @@ class Game : Activity(), SurfaceHolder.Callback,
         usbDriverServiceManager?.bind()
     }
 
+    private fun exitStreamFromDriverShortcut() {
+        UsbDriverExitCoordinator.exit(
+            isFinishing = isFinishing,
+            releaseUsb = { usbDriverServiceManager?.stopAndUnbind() },
+            finishActivity = ::finish
+        )
+    }
+
     // endregion
 
+    @SuppressLint("InlinedApi")
     private fun buildStreamConfiguration(
         host: String?, port: Int, httpsPort: Int,
         uniqueId: String?, pairName: String?,
-        pcUseVdd: Boolean, serverCert: X509Certificate?,
+        pcUseVdd: Boolean?, serverCert: X509Certificate?,
         displayName: String?
     ): StreamConfigResult {
         val glPrefs = GlPreferences.readPreferences(this)
         val connMgr = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val acceptableHdrTypes = if (prefConfig.enableHdr &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        ) {
+            when (prefConfig.hdrMode) {
+                MoonBridge.HDR_MODE_HLG ->
+                    intArrayOf(Display.HdrCapabilities.HDR_TYPE_HLG)
+                MoonBridge.HDR_MODE_HDR10_PLUS ->
+                    intArrayOf(Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS)
+                MoonBridge.HDR_MODE_DOLBY_VISION ->
+                    intArrayOf(Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION)
+                MoonBridge.HDR_MODE_DOLBY_VISION_84 ->
+                    intArrayOf(Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION)
+                MoonBridge.HDR_MODE_HDR10 -> intArrayOf(
+                    // A mode advertising HDR10+ can also present the static HDR10 base layer.
+                    Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS,
+                    Display.HdrCapabilities.HDR_TYPE_HDR10,
+                )
+                else -> IntArray(0)
+            }
+        } else {
+            IntArray(0)
+        }
+        val displayModeSelection = selectDisplayModeForRendering(acceptableHdrTypes)
+        val hdrTypeSupport = HdrCapabilityHelper.getHdrTypeSupport(
+            currentTargetDisplay,
+            displayModeSelection.selectedModeId,
+        )
 
         var willStreamHdr = false
         if (prefConfig.enableHdr) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val hdrCaps = currentTargetDisplay.hdrCapabilities
-
-                if (hdrCaps != null) {
-                    for (hdrType in hdrCaps.supportedHdrTypes) {
-                        if (hdrType == Display.HdrCapabilities.HDR_TYPE_HDR10) {
-                            willStreamHdr = true
-                            break
-                        }
-                    }
+                willStreamHdr = when (prefConfig.hdrMode) {
+                    MoonBridge.HDR_MODE_HLG -> hdrTypeSupport.hasHlg
+                    MoonBridge.HDR_MODE_HDR10_PLUS -> hdrTypeSupport.hasHdr10Plus
+                    MoonBridge.HDR_MODE_DOLBY_VISION -> hdrTypeSupport.hasDolbyVision
+                    MoonBridge.HDR_MODE_DOLBY_VISION_84 -> hdrTypeSupport.hasDolbyVision
+                    MoonBridge.HDR_MODE_HDR10 -> hdrTypeSupport.hasHdr10 || hdrTypeSupport.hasHdr10Plus
+                    else -> false
                 }
                 if (!willStreamHdr) {
-                    Toast.makeText(this, "Display does not support HDR10", Toast.LENGTH_LONG).show()
+                    val requiredType = when (prefConfig.hdrMode) {
+                        MoonBridge.HDR_MODE_HLG -> "HLG"
+                        MoonBridge.HDR_MODE_HDR10_PLUS -> "HDR10+"
+                        MoonBridge.HDR_MODE_DOLBY_VISION -> "Dolby Vision"
+                        MoonBridge.HDR_MODE_DOLBY_VISION_84 -> "Dolby Vision (HLG)"
+                        MoonBridge.HDR_MODE_HDR10 -> "HDR10"
+                        else -> "HDR"
+                    }
+                    Toast.makeText(this, this.getString(R.string.error_display_hdr_format, requiredType), Toast.LENGTH_LONG).show()
                 }
             } else {
-                Toast.makeText(this, "HDR requires Android 7.0 or later", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, this.getString(R.string.error_hdr_android_version), Toast.LENGTH_LONG).show()
             }
+        }
+
+        // HDR10+ metadata cannot survive the ImageReader/frame-generation path yet. Keep that
+        // path on static HDR10 until frame generation explicitly supports dynamic metadata.
+        val framegenRequested = shouldUseFramegen()
+        val hdr10PlusRequested = HdrModePolicy.shouldRequestHdr10Plus(
+            hdrEnabled = willStreamHdr,
+            hdrMode = prefConfig.hdrMode,
+            displaySupportsHdr10Plus = hdrTypeSupport.hasHdr10Plus,
+            framegenRequested = framegenRequested,
+        )
+        if (willStreamHdr &&
+            prefConfig.hdrMode == MoonBridge.HDR_MODE_HDR10_PLUS &&
+            hdrTypeSupport.hasHdr10Plus &&
+            framegenRequested
+        ) {
+            LimeLog.info("HDR10+ disabled while frame generation is enabled; using static HDR10")
+        }
+
+        // Dolby Vision needs the device's native decode path on top of the
+        // display capability: video/dolby-vision + DvheSt at this resolution.
+        val dolbyVisionProbe = DolbyVisionCapabilityProbe(
+            prefConfig.width,
+            prefConfig.height,
+            prefConfig.fps,
+        ).probe()
+        val dolbyVisionRequested = HdrModePolicy.shouldRequestDolbyVision(
+            hdrEnabled = willStreamHdr,
+            hdrMode = prefConfig.hdrMode,
+            displaySupportsDolbyVision = hdrTypeSupport.hasDolbyVision,
+            decoderSupportsDolbyVision = dolbyVisionProbe.decoderAvailable,
+            framegenRequested = framegenRequested,
+        )
+        if (willStreamHdr &&
+            HdrModePolicy.isDolbyVisionMode(prefConfig.hdrMode) &&
+            !dolbyVisionRequested
+        ) {
+            LimeLog.info(
+                "Dolby Vision unavailable (display=${hdrTypeSupport.hasDolbyVision}, " +
+                    "decoder=${dolbyVisionProbe.decoderAvailable}, " +
+                    "framegen=$framegenRequested); falling back to static HDR10"
+            )
         }
 
         if (decoderRenderer == null) {
@@ -687,6 +965,7 @@ class Game : Activity(), SurfaceHolder.Callback,
                 tombstonePrefs.getInt("CrashCount", 0),
                 connMgr.isActiveNetworkMetered,
                 willStreamHdr,
+                hdr10PlusRequested,
                 glPrefs.glRenderer,
                 this
             )
@@ -703,30 +982,77 @@ class Game : Activity(), SurfaceHolder.Callback,
             }
         }
 
-        if (willStreamHdr && decoderRenderer?.isHevcMain10Supported() != true && decoderRenderer?.isAv1Main10Supported() != true) {
+        val hevcHdrSupported = when {
+            // DV 8.4 rides an HLG base layer: only Main10 decode support is
+            // required, exactly like the plain HLG selection.
+            prefConfig.hdrMode == MoonBridge.HDR_MODE_HLG ||
+                prefConfig.hdrMode == MoonBridge.HDR_MODE_DOLBY_VISION_84 ->
+                decoderRenderer?.isHevcMain10Supported() == true
+            hdr10PlusRequested ->
+                decoderRenderer?.isHevcHdr10PlusEligible() == true
+            else -> decoderRenderer?.isHevcMain10Hdr10Supported() == true
+        }
+        val av1HdrSupported = when {
+            prefConfig.hdrMode == MoonBridge.HDR_MODE_HLG ||
+                prefConfig.hdrMode == MoonBridge.HDR_MODE_DOLBY_VISION_84 ->
+                decoderRenderer?.isAv1Main10Supported() == true
+            hdr10PlusRequested ->
+                decoderRenderer?.isAv1Hdr10PlusEligible() == true
+            else -> decoderRenderer?.isAv1Main10Hdr10Supported() == true
+        }
+        val selectedCodecSupportsHdr = when (prefConfig.videoFormat) {
+            PreferenceConfiguration.FormatOption.FORCE_HEVC -> hevcHdrSupported
+            PreferenceConfiguration.FormatOption.FORCE_AV1 -> av1HdrSupported
+            PreferenceConfiguration.FormatOption.FORCE_H264 -> false
+            PreferenceConfiguration.FormatOption.AUTO -> hevcHdrSupported || av1HdrSupported
+        }
+        if (willStreamHdr && !selectedCodecSupportsHdr) {
             willStreamHdr = false
-            Toast.makeText(this, "Decoder does not support HDR10 profile", Toast.LENGTH_LONG).show()
+            val requiredProfile = when (prefConfig.hdrMode) {
+                MoonBridge.HDR_MODE_HLG, MoonBridge.HDR_MODE_DOLBY_VISION_84 -> "Main10/HLG"
+                MoonBridge.HDR_MODE_HDR10_PLUS -> if (hdr10PlusRequested) "HDR10+" else "HDR10"
+                else -> "HDR10"
+            }
+            Toast.makeText(this, this.getString(R.string.error_decoder_profile, requiredProfile), Toast.LENGTH_LONG).show()
         }
 
+        // The renderer is constructed before this final decoder gate so that common-c can
+        // query capabilities later. Clear a speculative HDR10+ request before that happens
+        // when display/decoder negotiation ultimately falls back to SDR.
+        decoderRenderer?.setHdr10PlusRequested(willStreamHdr && hdr10PlusRequested)
+
         if (prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_HEVC && decoderRenderer?.isHevcSupported() != true) {
-            Toast.makeText(this, "No HEVC decoder found", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, this.getString(R.string.error_no_hevc_decoder), Toast.LENGTH_LONG).show()
         }
         if (prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_AV1 && decoderRenderer?.isAv1Supported() != true) {
-            Toast.makeText(this, "No AV1 decoder found", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, this.getString(R.string.error_no_av1_decoder), Toast.LENGTH_LONG).show()
         }
 
         var supportedVideoFormats = MoonBridge.VIDEO_FORMAT_H264
         if (decoderRenderer?.isHevcSupported() == true) {
             supportedVideoFormats = supportedVideoFormats or MoonBridge.VIDEO_FORMAT_H265
-            if (willStreamHdr && decoderRenderer?.isHevcMain10Supported() == true) {
+            if (willStreamHdr && hevcHdrSupported) {
                 supportedVideoFormats = supportedVideoFormats or MoonBridge.VIDEO_FORMAT_H265_MAIN10
             }
         }
         if (decoderRenderer?.isAv1Supported() == true) {
             supportedVideoFormats = supportedVideoFormats or MoonBridge.VIDEO_FORMAT_AV1_MAIN8
-            if (willStreamHdr && decoderRenderer?.isAv1Main10Supported() == true) {
+            if (willStreamHdr && av1HdrSupported) {
                 supportedVideoFormats = supportedVideoFormats or MoonBridge.VIDEO_FORMAT_AV1_MAIN10
             }
+        }
+
+        if (dolbyVisionRequested && decoderRenderer?.isHevcSupported() == true) {
+            // Dolby Vision 8.1 rides an HEVC Main10 base layer only. Offering
+            // AV1/H.264 alongside lets the host pick a codec the RPU cannot
+            // follow, which would downgrade DV to plain HDR10 at negotiation.
+            supportedVideoFormats = MoonBridge.VIDEO_FORMAT_H265 or MoonBridge.VIDEO_FORMAT_H265_MAIN10
+            if (prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_AV1 ||
+                prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_H264
+            ) {
+                Toast.makeText(this, this.getString(R.string.error_dolby_requires_hevc), Toast.LENGTH_LONG).show()
+            }
+            LimeLog.info("Dolby Vision requested: restricting codec mask to HEVC")
         }
 
         var gamepadMask = ControllerHandler.getAttachedControllerMask(this).toInt()
@@ -737,7 +1063,7 @@ class Game : Activity(), SurfaceHolder.Callback,
             gamepadMask = gamepadMask or 1
         }
 
-        val displayRefreshRate = prepareDisplayForRendering()
+        val displayRefreshRate = applyDisplayModeForRendering(displayModeSelection)
         LimeLog.info("Display refresh rate: $displayRefreshRate Hz")
 
         performanceOverlayManager?.setActualDisplayRefreshRate(displayRefreshRate)
@@ -761,6 +1087,13 @@ class Game : Activity(), SurfaceHolder.Callback,
             }
         }
 
+        negotiatedHdrEnabled = willStreamHdr && prefConfig.hdrMode != MoonBridge.HDR_MODE_SDR
+        framegenInputHdrEnabled = negotiatedHdrEnabled
+
+        val waveformController = UsbWaveformBackends.hasEligibleController(
+            getSystemService(USB_SERVICE) as? UsbManager,
+            prefConfig.allowExperimentalHaptics)
+        val hostGamepad = prefConfig.hostGamepadSelection.resolve(prefConfig.screenDs5Touchpad, waveformController)
         val config = StreamConfiguration.Builder()
             .setResolution(prefConfig.width, prefConfig.height)
             .setLaunchRefreshRate(prefConfig.fps)
@@ -781,22 +1114,68 @@ class Game : Activity(), SurfaceHolder.Callback,
             // — bypasses both PcmPassthroughRenderer and Ac3PassthroughRenderer.
             .setAudioCodec(if (prefConfig.enableAudioPassthrough) prefConfig.audioCodec else MoonBridge.AUDIO_CODEC_OPUS)
             .setAudioBitrate(prefConfig.audioCodecBitrate)
+            .setAuthoredPcmHaptics(prefConfig.hostGamepadSelection.requestsAuthoredPcm(
+                waveformController,
+                prefConfig.gameRumbleMode != com.limelight.binding.input.haptics.GameRumbleMode.DEVICE))
+            .setHostGamepad(hostGamepad)
             .setColorSpace(decoderRenderer?.getPreferredColorSpace() ?: 0)
             .setColorRange(
-                if (willStreamHdr && prefConfig.hdrMode == MoonBridge.HDR_MODE_HLG)
-                    MoonBridge.COLOR_RANGE_FULL
-                else decoderRenderer?.getPreferredColorRange() ?: 0
+                decoderRenderer?.getPreferredColorRange()
+                    ?: ColorRangePolicy.fromPreference(prefConfig.fullRange)
             )
-            .setHdrMode(if (willStreamHdr) prefConfig.hdrMode else MoonBridge.HDR_MODE_SDR)
+            .setHdrMode(
+                if (willStreamHdr) {
+                    prefConfig.hdrMode
+                } else {
+                    MoonBridge.HDR_MODE_SDR
+                }
+            )
+            .setHdrBrightnessOverride(
+                willStreamHdr && prefConfig.hdrBrightnessOverride,
+                prefConfig.hdrPeakBrightnessNits
+            )
+            .apply {
+                // Sunshine dynamic HDR negotiation, opt-in only when a dynamic
+                // format is actually selected: a Dolby Vision request reports
+                // just the DV bit so the host's fallback chain lands on plain
+                // HDR10, and an HDR10+ request reports the HDR10+ bit. Every
+                // other selection keeps the legacy no-attribute behavior.
+                // The host negotiates 8.4 only for an 8.4-only report riding an
+                // HLG request, so the HLG-profile selection reports only that bit.
+                // willStreamHdr is re-checked because decoder validation above
+                // can clear it after these request flags were computed.
+                if (willStreamHdr && dolbyVisionRequested && HdrModePolicy.isDolbyVisionHlgMode(prefConfig.hdrMode)) {
+                    setDynamicHdrNegotiation(
+                        MoonBridge.DYNAMIC_HDR_CAPS_DOLBY_VISION_84,
+                        dolbyVisionDirectSurface = true,
+                        preference = MoonBridge.DYNAMIC_HDR_PREFERENCE_DOLBY_VISION,
+                    )
+                } else if (willStreamHdr && dolbyVisionRequested) {
+                    setDynamicHdrNegotiation(
+                        MoonBridge.DYNAMIC_HDR_CAPS_DOLBY_VISION_81,
+                        dolbyVisionDirectSurface = true,
+                        preference = MoonBridge.DYNAMIC_HDR_PREFERENCE_DOLBY_VISION,
+                    )
+                } else if (willStreamHdr && hdr10PlusRequested) {
+                    setDynamicHdrNegotiation(
+                        MoonBridge.DYNAMIC_HDR_CAPS_HDR10_PLUS,
+                        dolbyVisionDirectSurface = false,
+                        preference = MoonBridge.DYNAMIC_HDR_PREFERENCE_HDR10_PLUS,
+                    )
+                }
+            }
             .setPersistGamepadsAfterDisconnect(!prefConfig.multiController)
             .setUseVdd(pcUseVdd)
+            .setTouchKeyboard(prefConfig.touchKeyboardAutoInvoke)
             .setEnableMic(prefConfig.enableMic)
             .setControlOnly(prefConfig.controlOnly)
             .setCustomScreenMode(prefConfig.screenCombinationMode)
-            .setCustomVddScreenMode(prefConfig.vddScreenCombinationMode)
             .build()
 
-        LimeLog.info("Stream config: hdr=$willStreamHdr hdrMode=${prefConfig.hdrMode} fullRange=${prefConfig.fullRange}")
+        LimeLog.info(
+            "Stream config: hdr=$willStreamHdr hdrMode=${prefConfig.hdrMode} " +
+                "protocolHdrMode=${config.hdrMode} fullRange=${prefConfig.fullRange}"
+        )
 
         return StreamConfigResult(config, displayRefreshRate, clientRefreshRateX100)
     }
@@ -808,6 +1187,7 @@ class Game : Activity(), SurfaceHolder.Callback,
     )
 
     private fun prepareConnection() {
+        audioVibrationService?.stop()
         cursorServiceManager.destroyLocalCursorRenderers()
         runOnUiThread {
             val cursorOverlay = findViewById<CursorView>(R.id.cursorOverlay)
@@ -825,11 +1205,20 @@ class Game : Activity(), SurfaceHolder.Callback,
             decoderRenderer = null
         }
 
+        // The Game activity may survive while the stream is stopped. Refresh the
+        // controller motion settings before rebuilding the handler so a resumed
+        // session doesn't keep the values captured by onCreate().
+        prefConfig.refreshControllerMotionPreferencesFrom(
+            PreferenceConfiguration.readPreferences(this, currentTargetDisplay)
+        )
+
         createConnectionAndHandler()
+        performanceOverlayManager?.recordStreamStart()
 
         audioVibrationService?.controllerHandler = controllerHandler
+        bindAudioHapticsTouchArbitration()
 
-        if (prefConfig.usbDriver) {
+        if (prefConfig.usbDriver || prefConfig.dualSenseWirelessBridge || packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_USB_HOST)) {
             bindUsbDriverService()
         } else {
             usbDriverServiceManager?.refreshListener()
@@ -838,7 +1227,7 @@ class Game : Activity(), SurfaceHolder.Callback,
         touchInputHandler.initTouchContexts(conn!!, streamView, prefConfig)
 
         if (virtualController != null && prefConfig.onscreenController) {
-            setupVirtualControllerGyro()
+            refreshVirtualControllerLayout()
         }
 
         if (controllerManager != null) {
@@ -867,6 +1256,22 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     override fun onResume() {
         super.onResume()
+        if (::floatBallHandler.isInitialized &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !isInPictureInPictureMode) &&
+            !pipInteractiveOverlayState.isActive() &&
+            pendingPipExitSnapshot == null &&
+            floatBallHandler.isRequestedVisible()
+        ) {
+            floatBallHandler.show()
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Reconcile OEM callback gaps after rapid PiP transitions.
+            applyPictureInPictureUiState(isInPictureInPictureMode, activityResumed = true)
+        }
+        if (audioVibrationService != null) {
+            updateAudioHapticsRuntimeEnabled(true)
+            if (connected) audioVibrationService?.resumeAfterForeground()
+        }
         KeyboardAccessibilityService.setIntercepting(true)
         val service = KeyboardAccessibilityService.instance
         if (service != null) {
@@ -877,9 +1282,6 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         if (microphoneManager != null && micButton != null) {
             microphoneManager?.updateMicrophoneButtonState()
-        }
-        if (::floatBallHandler.isInitialized) {
-            floatBallHandler.show()
         }
     }
 
@@ -913,29 +1315,137 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         virtualController?.refreshLayout()
         controllerManager?.refreshLayout()
+        performanceOverlayManager?.onConfigurationChanged()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (isInPictureInPictureMode) {
-                virtualController?.hide()
-                performanceOverlayManager?.hideOverlayImmediate()
-                notificationOverlayManager.setHiding(true)
-                microphoneManager?.setEnableMic(false)
-                controllerHandler.disableSensors()
-                UiHelper.notifyStreamEnteringPiP(this)
-            } else {
-                virtualController?.show()
-                performanceOverlayManager?.applyRequestedVisibility()
-                notificationOverlayManager.setHiding(false)
-                notificationOverlayManager.applyVisibility()
-                microphoneManager?.setEnableMic(prefConfig.enableMic)
-                controllerHandler.enableSensors()
-                controllerHandler.onSensorsReenabled()
-                UiHelper.notifyStreamExitingPiP(this)
-            }
+            applyPictureInPictureUiState(isInPictureInPictureMode)
         }
 
-        performanceOverlayManager?.onConfigurationChanged()
+        // PiP 下不重显浮层：进入 PiP 分支已 hideImmediate()，此处仅在非 PiP 时按偏好显隐
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !isInPictureInPictureMode) {
+            jitterMonitorManager?.applyVisibility()
+        }
         refreshDisplayPosition()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        applyPictureInPictureUiState(isInPictureInPictureMode)
+    }
+
+    private fun applyPictureInPictureUiState(
+        inPictureInPicture: Boolean,
+        activityResumed: Boolean = lifecycle.currentState.isAtLeast(
+            androidx.lifecycle.Lifecycle.State.RESUMED
+        )
+    ) {
+        if (inPictureInPicture) {
+            val pendingSnapshot = pendingPipExitSnapshot
+            if (pendingSnapshot != null) {
+                cancelPendingPipOverlayRestore()
+            }
+            val isFirstEntry = pipInteractiveOverlayState.enter(
+                pendingSnapshot ?: PipInteractiveOverlaySnapshot(
+                    virtualControllerVisible = isVirtualControllerVisible(),
+                    crownControllerVisible = controllerManager?.isVisible() == true,
+                    microphoneButtonVisible = micButton?.visibility == View.VISIBLE,
+                    floatBallVisible = ::floatBallHandler.isInitialized &&
+                            floatBallHandler.isRequestedVisible()
+                )
+            )
+            enforcePictureInPictureUiState()
+            if (isFirstEntry) {
+                UiHelper.notifyStreamEnteringPiP(this)
+            }
+            return
+        }
+
+        val snapshot = pipInteractiveOverlayState.exitIfResumed(activityResumed) ?: return
+        // onResume may arrive while the platform still reports PiP. In that
+        // order, the later PiP exit callback must restore the floating window.
+        if (prefConfig.enableFloatBall && ::floatBallHandler.isInitialized &&
+            activityResumed
+        ) {
+            schedulePipOverlayRestore(snapshot)
+        }
+
+        if (snapshot.virtualControllerVisible && prefConfig.onscreenController) {
+            virtualController?.show()
+        } else {
+            virtualController?.hide()
+        }
+        if (snapshot.crownControllerVisible && prefConfig.enableCrownFeatures) {
+            controllerManager?.show()
+        } else {
+            controllerManager?.hide()
+        }
+        performanceOverlayManager?.applyRequestedVisibility()
+        jitterMonitorManager?.applyVisibility()
+        notificationOverlayManager.setHiding(false)
+        notificationOverlayManager.applyVisibility()
+        microphoneManager?.setEnableMic(prefConfig.enableMic)
+        micButton?.visibility = if (
+            snapshot.microphoneButtonVisible && prefConfig.enableMic
+        ) View.VISIBLE else View.GONE
+        controllerHandler.enableSensors()
+        UiHelper.notifyStreamExitingPiP(this)
+    }
+
+    private fun schedulePipOverlayRestore(snapshot: PipInteractiveOverlaySnapshot) {
+        cancelPendingPipOverlayRestore()
+        pendingPipExitSnapshot = snapshot
+        val generation = ++pipOverlayRestoreGeneration
+        fun restoreAfterWindowExit() {
+            window.decorView.doOnPreDraw {
+                if (generation != pipOverlayRestoreGeneration || isFinishing || isDestroyed) {
+                    return@doOnPreDraw
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+                    // Some OEMs report the PiP exit callback before the window
+                    // leaves PiP. Keep waiting instead of losing the snapshot.
+                    window.decorView.postOnAnimation { restoreAfterWindowExit() }
+                    return@doOnPreDraw
+                }
+                val activityResumed = lifecycle.currentState.isAtLeast(
+                    androidx.lifecycle.Lifecycle.State.RESUMED
+                )
+                if (!activityResumed) {
+                    pendingPipExitSnapshot = null
+                    return@doOnPreDraw
+                }
+
+                pendingPipExitSnapshot = null
+                if (snapshot.floatBallVisible) {
+                    floatBallHandler.show()
+                } else {
+                    floatBallHandler.hide()
+                }
+            }
+        }
+        restoreAfterWindowExit()
+    }
+
+    private fun cancelPendingPipOverlayRestore() {
+        pipOverlayRestoreGeneration++
+        pendingPipExitSnapshot = null
+    }
+
+    private fun enforcePictureInPictureUiState() {
+        virtualController?.hide()
+        controllerManager?.hide()
+        micButton?.visibility = View.GONE
+        if (::floatBallHandler.isInitialized) floatBallHandler.suppress()
+        controllerShortcutHintView?.visibility = View.GONE
+        hideStartHoldWheel()
+        performanceOverlayManager?.hideOverlayImmediate()
+        jitterMonitorManager?.hideImmediate()
+        notificationOverlayManager.setHiding(true)
+        microphoneManager?.setEnableMic(false)
+        controllerHandler.disableSensors()
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -1042,25 +1552,40 @@ class Game : Activity(), SurfaceHolder.Callback,
         }
     }
 
-    private fun prepareDisplayForRendering(): Float {
+    private fun selectDisplayModeForRendering(
+        acceptableHdrTypes: IntArray = IntArray(0),
+    ): DisplayModeManager.DisplayModeSelection {
         val display = currentTargetDisplay
 
-        val result = DisplayModeManager.selectBestDisplayMode(display, prefConfig)
-
-        val windowLayoutParams = window.attributes
-        if (result.preferredModeId >= 0) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                windowLayoutParams.preferredDisplayModeId = result.preferredModeId
+        val presentationFps = framegenPresentationFps()
+        val displayConfig = if (presentationFps != prefConfig.fps) {
+            prefConfig.copy().apply {
+                fps = presentationFps
             }
-            window.attributes = windowLayoutParams
-        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            windowLayoutParams.preferredRefreshRate = result.refreshRate
-            window.attributes = windowLayoutParams
+        } else {
+            prefConfig
+        }
+        if (displayConfig.fps != prefConfig.fps) {
+            LimeLog.info("Framegen display target FPS: ${prefConfig.fps} -> ${displayConfig.fps}")
         }
 
-        updateStreamViewSize(prefConfig.width, prefConfig.height, result.aspectRatioMatch)
-        desiredRefreshRate = result.refreshRate
-        return result.refreshRate
+        return DisplayModeManager.selectBestDisplayMode(display, displayConfig, acceptableHdrTypes)
+    }
+
+    private fun applyDisplayModeForRendering(
+        selection: DisplayModeManager.DisplayModeSelection,
+    ): Float {
+        selectedDisplayMode = selection
+
+        if (!targetDisplayResolver.isExternalDisplaySelected()) {
+            DisplayModeWindowApplier.apply(window, selection)
+        } else {
+            externalDisplayManager?.updateDisplayMode(selection)
+        }
+
+        updateStreamViewSize(prefConfig.width, prefConfig.height, selection.aspectRatioMatch)
+        desiredRefreshRate = selection.refreshRate
+        return selection.refreshRate
     }
 
     @SuppressLint("InlinedApi")
@@ -1101,12 +1626,36 @@ class Game : Activity(), SurfaceHolder.Callback,
     }
 
     override fun onDestroy() {
-        cancelKeepAliveNotification()
+        destroying = true
+        MoonBridge.detachConnectionListener(this)
+        if (::streamView.isInitialized) {
+            streamView.setInputCallbacks(null)
+        }
+        usbForwarding?.close()
+        usbForwarding = null
+        if (isFinishing && !isChangingConfigurations) {
+            cancelKeepAliveNotification()
+        }
+        micButtonPositionController?.dispose()
+        if (::remoteImeController.isInitialized) {
+            remoteImeController.dispose()
+        }
+        micButtonPositionController = null
+        if (::cursorServiceManager.isInitialized) {
+            cursorServiceManager.destroy()
+        }
         if (::orientationManager.isInitialized) {
             orientationManager.cleanup()
         }
         if (::floatBallHandler.isInitialized) {
             floatBallHandler.release()
+        }
+
+        if (audioVibrationService != null) {
+            updateAudioHapticsRuntimeEnabled(false)
+            MoonBridge.setAudioHapticsSessionHandle(0L)
+            audioVibrationService?.release()
+            audioVibrationService = null
         }
 
         super.onDestroy()
@@ -1115,14 +1664,10 @@ class Game : Activity(), SurfaceHolder.Callback,
             connectionCallbackHandler.stopConnection()
         }
 
+        usbDriverServiceManager?.stopAndUnbind()
+
         if (::controllerHandler.isInitialized) {
             controllerHandler.destroy()
-        }
-
-        if (audioVibrationService != null) {
-            audioVibrationService?.stop()
-            MoonBridge.setBassEnergyEnabled(false)
-            MoonBridge.setBassEnergyListener(null)
         }
 
         if (::keyboardInputHandler.isInitialized) {
@@ -1132,7 +1677,8 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         lowLatencyWifiLock?.release()
         highPerfWifiLock?.release()
-        usbDriverServiceManager?.stopAndUnbind()
+        jitterMonitorManager?.destroy()
+        jitterMonitorManager = null
         if (::inputCaptureProvider.isInitialized) {
             inputCaptureProvider.destroy()
         }
@@ -1140,11 +1686,17 @@ class Game : Activity(), SurfaceHolder.Callback,
         microphoneManager?.stopMicrophoneStream()
         clipboardSyncManager?.stop()
         clipboardSyncManager = null
+        framegenSurfaceGeneration.incrementAndGet()
+        framegenSurfaceExecutor.shutdownNow()
     }
 
     override fun onPause() {
+        crownConfigPicker?.dismiss()
+        controllerManager?.elementController?.cancelDirectConfigSwitch()
+        updateAudioHapticsRuntimeEnabled(false)
+        audioVibrationService?.stop()
         if (::floatBallHandler.isInitialized) {
-            floatBallHandler.hide()
+            floatBallHandler.suppress()
         }
         KeyboardAccessibilityService.setIntercepting(false)
         KeyboardAccessibilityService.instance?.keyEventCallback = null
@@ -1160,6 +1712,78 @@ class Game : Activity(), SurfaceHolder.Callback,
         super.onPause()
     }
 
+    private fun updateAudioHapticsRuntimeEnabled(foreground: Boolean) {
+        val featureEnabled = foreground && prefConfig.enableAudioVibration
+        MoonBridge.setAudioHapticsOutputEnabled(featureEnabled)
+    }
+
+    private fun bindAudioHapticsTouchArbitration() {
+        val service = audioVibrationService ?: return
+        if (!::controllerHandler.isInitialized) return
+        controllerHandler.setDeviceTouchAudioCallbacks(
+            onPreemptRequested = service::preemptDeviceOutputForTouch,
+            onFinished = service::resumeDeviceOutputAfterTouch,
+        )
+    }
+
+    internal fun stopAudioHapticsForStream() {
+        audioVibrationService?.stop()
+    }
+
+    /**
+     * Applies Game Menu audio-haptics changes to the active stream.
+     *
+     * Android's system audio-coupled generator owns the device motor for the
+     * lifetime of its AudioTrack. Reconfiguring it in place would leave the UI
+     * and actual route out of sync, so those uncommon changes are persisted for
+     * the next stream instead.
+     */
+    internal fun applyAudioHapticsSettings(settings: AudioHapticsSettings): Boolean {
+        val service = audioVibrationService ?: return false
+        val canApply = AudioHapticsRuntimePolicy.canApplyImmediately(
+            systemAudioCoupledActive = service.systemAudioCoupledDeviceActive,
+            applied = currentAudioHapticsSettings(),
+            desired = settings
+        )
+        if (!canApply) return false
+
+        service.setSettings(
+            settings.enabled,
+            settings.strength,
+            settings.mode,
+            settings.scene
+        )
+        appliedAudioHapticsSettings = settings
+        MoonBridge.setAudioHapticsSceneMode(settings.scene)
+        updateAudioHapticsRuntimeEnabled(true)
+        return true
+    }
+
+    internal fun currentAudioHapticsSettings(): AudioHapticsSettings {
+        return appliedAudioHapticsSettings ?: AudioHapticsSettings(
+            enabled = prefConfig.enableAudioVibration,
+            strength = prefConfig.audioVibrationStrength,
+            mode = prefConfig.audioVibrationMode,
+            scene = prefConfig.audioVibrationScene
+        )
+    }
+
+    internal fun applyAudioHapticsStrength(strength: Int): Boolean {
+        val service = audioVibrationService ?: return false
+        if (service.systemAudioCoupledDeviceActive) return false
+
+        val bounded = strength.coerceIn(0, AudioVibrationService.MAX_STRENGTH)
+        val settings = currentAudioHapticsSettings().copy(strength = bounded)
+        service.setSettings(
+            settings.enabled,
+            settings.strength,
+            settings.mode,
+            settings.scene
+        )
+        appliedAudioHapticsSettings = settings
+        return true
+    }
+
     fun changeResolution() {
         isChangingResolution = true
         this.recreate()
@@ -1167,6 +1791,7 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     override fun onStop() {
         super.onStop()
+        usbForwarding?.stopForeground()
 
         if ((isExtremeResumeEnabled || isChangingResolution) && !isFinishing) {
             LimeLog.info("Extreme Resume: onStop intercepted.")
@@ -1197,9 +1822,12 @@ class Game : Activity(), SurfaceHolder.Callback,
         activeGameMenu?.dismiss()
         activeGameMenu = null
 
+        if (!isFinishing) {
+            virtualControllerVisibleBeforeStop =
+                pipInteractiveOverlayState.virtualControllerVisibleForStop(isVirtualControllerVisible())
+        }
         if (virtualController != null) {
             virtualController?.hide()
-            virtualController?.cleanup()
         }
 
         val decoderMessage = getDecoderFormatLabel()
@@ -1219,7 +1847,12 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         reportStreamAnalytics(decoderMessage)
 
-        if (shouldResumeSession && isResumeStreamEnabled) {
+        if (StreamKeepAlivePolicy.shouldStartForResume(
+                isFinishing = isFinishing,
+                shouldResumeSession = shouldResumeSession,
+                isResumeStreamEnabled = isResumeStreamEnabled,
+            )
+        ) {
             showKeepAliveNotification()
             LimeLog.info("应用进入后台，保持 Activity 存活以备快速恢复。连接已断开。")
         } else {
@@ -1313,21 +1946,42 @@ class Game : Activity(), SurfaceHolder.Callback,
                 inputCaptureProvider.showCursor()
             }
         } else {
+            if (::touchInputHandler.isInitialized) {
+                touchInputHandler.cancelNonRootTouchpad()
+            }
             inputCaptureProvider.disableCapture()
         }
         setMetaKeyCaptureState(grab)
         grabbedInput = grab
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            controllerManager?.elementController?.cancelDirectConfigSwitch()
+        }
+        return try {
+            super.dispatchTouchEvent(event)
+        } finally {
+            // The final UP reaches all old input receivers before a Crown layout is replaced.
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                controllerManager?.elementController?.finishStreamTouch(event.actionMasked)
+            }
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         return keyboardInputHandler.handleKeyDown(event) || super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         return keyboardInputHandler.handleKeyUp(event) || super.onKeyUp(keyCode, event)
     }
 
     override fun onKeyMultiple(keyCode: Int, repeatCount: Int, event: KeyEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         return keyboardInputHandler.handleKeyMultiple(event) || super.onKeyMultiple(keyCode, repeatCount, event)
     }
 
@@ -1337,6 +1991,25 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     override fun handleKeyUp(event: KeyEvent): Boolean {
         return keyboardInputHandler.handleKeyUp(event)
+    }
+
+    override fun handleText(text: String) {
+        conn?.sendUtf8Text(text)
+    }
+
+    override fun handleDelete() {
+        keyboardInputHandler.handleKeyDown(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
+        keyboardInputHandler.handleKeyUp(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL))
+    }
+
+    override fun handleForwardDelete() {
+        keyboardInputHandler.handleKeyDown(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL))
+        keyboardInputHandler.handleKeyUp(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_FORWARD_DEL))
+    }
+
+    override fun handleEnter() {
+        keyboardInputHandler.handleKeyDown(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+        keyboardInputHandler.handleKeyUp(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 
     val relativeTouchContextMap: Array<TouchContext?>
@@ -1352,9 +2025,28 @@ class Game : Activity(), SurfaceHolder.Callback,
 
     override fun toggleKeyboard() {
         LimeLog.info("Toggling keyboard overlay")
-        streamView.clearFocus()
         val inputManager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-        inputManager.toggleSoftInput(0, 0)
+        val imeVisible = ViewCompat.getRootWindowInsets(streamView)
+            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (imeVisible) {
+            inputManager.hideSoftInputFromWindow(streamView.windowToken, 0)
+            return
+        }
+
+        streamView.setTextInputEnabled(true)
+        streamView.isFocusableInTouchMode = true
+        streamView.requestFocus()
+        streamView.post {
+            if (!isFinishing && !isDestroyed) {
+                inputManager.showSoftInput(streamView, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+    }
+
+    override fun onRemoteTextContext(context: RemoteTextContext) {
+        if (!destroying && ::remoteImeController.isInitialized) {
+            remoteImeController.handle(context)
+        }
     }
 
     fun enableNativeMousePointer(enable: Boolean) {
@@ -1362,11 +2054,13 @@ class Game : Activity(), SurfaceHolder.Callback,
         prefConfig.enableNativeMousePointer = enable
 
         if (enable) {
+            if (::touchInputHandler.isInitialized) {
+                touchInputHandler.cancelNonRootTouchpad()
+            }
             inputCaptureProvider.disableCapture()
             cursorVisible = true
             inputCaptureProvider.showCursor()
             setMetaKeyCaptureState(true)
-            cursorServiceManager.refreshLocalCursorState(true)
             val cursorOverlay = findViewById<CursorView>(R.id.cursorOverlay)
             cursorOverlay?.hide()
         } else {
@@ -1374,18 +2068,22 @@ class Game : Activity(), SurfaceHolder.Callback,
             inputCaptureProvider.hideCursor()
             setInputGrabState(true)
         }
+        cursorServiceManager.refreshCursorMode()
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        return touchInputHandler.handleMotionEvent(null, event) || super.onGenericMotionEvent(event)
+        if (usbForwarding?.consumes(event.device) == true) return true
+        return touchInputHandler.handleMotionEvent(getMotionEventTargetView(), event) || super.onGenericMotionEvent(event)
     }
 
     override fun onGenericMotion(view: View, event: MotionEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         return touchInputHandler.handleMotionEvent(view, event)
     }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouch(view: View, event: MotionEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         if (event.action == MotionEvent.ACTION_DOWN) {
             if (!prefConfig.syncTouchEventWithDisplay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 view.requestUnbufferedDispatch(event)
@@ -1407,6 +2105,11 @@ class Game : Activity(), SurfaceHolder.Callback,
     }
 
     override fun connectionTerminated(errorCode: Int) {
+        if (::remoteImeController.isInitialized) {
+            remoteImeController.resetSession()
+        }
+        val forwarding = usbForwarding
+        runOnUiThread { forwarding?.stopForeground() }
         connectionCallbackHandler.connectionTerminated(errorCode)
     }
 
@@ -1415,8 +2118,55 @@ class Game : Activity(), SurfaceHolder.Callback,
     }
 
     override fun connectionStarted() {
+        remoteImeController.resetSession()
         connectionCallbackHandler.connectionStarted()
+        screenDs5TouchpadHostSupport = ScreenDs5HostSupport.UNKNOWN
+        controllerHandler.retryPendingControllerArrivals {
+            if (prefConfig.screenDs5Touchpad) {
+                // Retries run first so pending arrivals populate the metadata cache;
+                // the DS5 declaration then re-declares slot 0 with DualSense capabilities.
+                controllerHandler.setScreenDs5TouchpadEnabled(true)
+            }
+        }
         startClipboardSyncIfEnabled()
+    }
+
+    private fun addDs5TouchpadFeedbackView() {
+        if (ds5TouchpadFeedbackView != null) return
+        ds5TouchpadFeedbackView = Ds5TouchpadFeedbackView(this) {
+            activeStreamView ?: streamView
+        }.also { feedbackView ->
+            (streamView.parent as FrameLayout).addView(
+                feedbackView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+    }
+
+    private fun removeDs5TouchpadFeedbackView() {
+        val view = ds5TouchpadFeedbackView ?: return
+        (view.parent as? FrameLayout)?.removeView(view)
+        ds5TouchpadFeedbackView = null
+    }
+
+    /**
+     * Toggle the screen DS5 touchpad at runtime: persist the preference, attach/detach
+     * the contact feedback overlay, and (un)declare controller 0 on the host. No-op when
+     * the requested state is already active. The game-menu touch-mode segments call this.
+     */
+    fun setScreenDs5TouchpadEnabled(enabled: Boolean) {
+        if (prefConfig.screenDs5Touchpad == enabled) return
+        prefConfig.screenDs5Touchpad = enabled
+        prefConfig.writePreferences(this)
+        if (enabled) {
+            addDs5TouchpadFeedbackView()
+        } else {
+            removeDs5TouchpadFeedbackView()
+        }
+        controllerHandler.setScreenDs5TouchpadEnabled(enabled)
     }
 
     private fun startClipboardSyncIfEnabled() {
@@ -1477,6 +2227,8 @@ class Game : Activity(), SurfaceHolder.Callback,
     override fun onStart() {
         super.onStart()
 
+        val stoppedVirtualControllerVisibility = restoreVirtualControllerAfterStop()
+
         if (!isStreamingActive && streamStartTime > 0) {
             lastActiveTime = System.currentTimeMillis()
             isStreamingActive = true
@@ -1485,11 +2237,13 @@ class Game : Activity(), SurfaceHolder.Callback,
 
         if (isExtremeResumeEnabled && connected) {
             LimeLog.info("Extreme Resume: Returning to foreground with active connection.")
+            shouldResumeSession = false
             if (progressOverlay != null) {
                 progressOverlay?.dismiss()
                 progressOverlay = null
             }
             hideSystemUi(500)
+            finalizeVirtualControllerAfterStop(stoppedVirtualControllerVisibility)
             return
         }
 
@@ -1505,6 +2259,7 @@ class Game : Activity(), SurfaceHolder.Callback,
                 prepareConnection()
             } catch (e: Exception) {
                 LimeLog.severe("Failed to prepare connection: ${e.message}")
+                finalizeVirtualControllerAfterStop(stoppedVirtualControllerVisibility)
                 finish()
                 return
             }
@@ -1517,6 +2272,22 @@ class Game : Activity(), SurfaceHolder.Callback,
             streamView.requestLayout()
             streamView.invalidate()
         }
+        finalizeVirtualControllerAfterStop(stoppedVirtualControllerVisibility)
+    }
+
+    private fun restoreVirtualControllerAfterStop(): Boolean? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) return null
+        return virtualControllerVisibleBeforeStop
+    }
+
+    private fun finalizeVirtualControllerAfterStop(wasVisible: Boolean?) {
+        if (wasVisible == null) return
+        if (wasVisible && prefConfig.onscreenController) {
+            virtualController?.show()
+        } else {
+            virtualController?.hide()
+        }
+        virtualControllerVisibleBeforeStop = null
     }
 
     override fun displayMessage(message: String) {
@@ -1538,9 +2309,50 @@ class Game : Activity(), SurfaceHolder.Callback,
         controllerHandler.handleRumbleTriggers(controllerNumber, leftTrigger, rightTrigger)
     }
 
+    override fun setAdaptiveTriggers(
+        controllerNumber: Short,
+        eventFlags: Byte,
+        typeLeft: Byte,
+        typeRight: Byte,
+        left: ByteArray,
+        right: ByteArray
+    ) {
+        controllerHandler.handleSetAdaptiveTriggers(
+            controllerNumber,
+            eventFlags,
+            typeLeft,
+            typeRight,
+            left,
+            right
+        )
+    }
+
     override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
         LimeLog.info("Display HDR mode: ${if (enabled) "enabled" else "disabled"}")
+        applyHdrOutputState(enabled)
         decoderRenderer?.setHdrMode(enabled, hdrMetadata)
+    }
+
+    /** Prepares the window/framegen path without fabricating a host HDR activation event. */
+    internal fun prepareInitialHdrOutput() {
+        if (!prefConfig.enableHdr || !negotiatedHdrEnabled) {
+            LimeLog.info("Skipping initial HDR output preparation: HDR was not negotiated")
+            return
+        }
+        LimeLog.info("Preparing initial HDR output state")
+        applyHdrOutputState(true)
+    }
+
+    internal fun isNegotiatedHdrEnabled(): Boolean = negotiatedHdrEnabled
+
+    private fun applyHdrOutputState(enabled: Boolean) {
+        framegenInputHdrEnabled = enabled
+        val framegenHdrMode = if (enabled) {
+            HdrModePolicy.toProtocolMode(prefConfig.hdrMode)
+        } else {
+            MoonBridge.HDR_MODE_SDR
+        }
+        FramegenInterceptor.configureHdrMode(framegenHdrMode, shouldUseFullRangeHdr(framegenHdrMode))
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             notifySystemHdrStatus(enabled)
@@ -1550,12 +2362,18 @@ class Game : Activity(), SurfaceHolder.Callback,
     private fun notifySystemHdrStatus(hdrEnabled: Boolean) {
         runOnUiThread {
             try {
+                val framegenSdrOutput = willFramegenOutputSdr()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    window.colorMode = if (hdrEnabled) ActivityInfo.COLOR_MODE_HDR else ActivityInfo.COLOR_MODE_DEFAULT
+                    window.colorMode =
+                        if (hdrEnabled && !framegenSdrOutput) {
+                            ActivityInfo.COLOR_MODE_HDR
+                        } else {
+                            ActivityInfo.COLOR_MODE_DEFAULT
+                        }
                 }
 
                 val params = window.attributes
-                if (hdrEnabled) {
+                if (hdrEnabled && !framegenSdrOutput) {
                     if (prefConfig.enableHdrHighBrightness) {
                         params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
                     }
@@ -1567,11 +2385,23 @@ class Game : Activity(), SurfaceHolder.Callback,
                 }
                 window.attributes = params
 
-                LimeLog.info("ColorOS HDR notification: Window color mode and brightness updated for HDR ${if (hdrEnabled) "enabled" else "disabled"}")
+                LimeLog.info(
+                    "ColorOS HDR notification: hdr=${if (hdrEnabled) "enabled" else "disabled"} " +
+                        "framegenSdr=$framegenSdrOutput"
+                )
             } catch (e: Exception) {
                 LimeLog.warning("Failed to notify ColorOS system HDR status: ${e.message}")
             }
         }
+    }
+
+    private fun willFramegenOutputSdr(): Boolean =
+        (framegenCapture != null || shouldUseFramegen()) && !framegenInputHdrEnabled
+
+    private fun shouldUseFullRangeHdr(hdrMode: Int): Boolean {
+        val preferredRange = decoderRenderer?.getPreferredColorRange()
+            ?: ColorRangePolicy.fromPreference(prefConfig.fullRange)
+        return ColorRangePolicy.isFullRangeHdr(hdrMode, preferredRange)
     }
 
     override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) {
@@ -1593,6 +2423,8 @@ class Game : Activity(), SurfaceHolder.Callback,
             baseWidth = alignedWidth
             baseHeight = alignedHeight
         }
+
+        cursorServiceManager.onStreamResolutionChanged(baseWidth, baseHeight)
 
         orientationManager.syncOrientationOnFirstFrame(baseWidth, baseHeight)
 
@@ -1617,12 +2449,32 @@ class Game : Activity(), SurfaceHolder.Callback,
         }
     }
 
+    override fun onCursorUpdate(
+        flags: Int,
+        shapeId: Int,
+        width: Int,
+        height: Int,
+        hotspotX: Int,
+        hotspotY: Int,
+        bgraPixels: ByteArray?
+    ) {
+        cursorServiceManager.onCursorUpdate(
+            flags,
+            shapeId,
+            width,
+            height,
+            hotspotX,
+            hotspotY,
+            bgraPixels
+        )
+    }
+
     private fun updateStreamViewSize(width: Int, height: Int, forceFixedSize: Boolean) {
         val screenSize = Point()
         currentTargetDisplay.getRealSize(screenSize)
 
         val exceedsScreenSize = width > screenSize.x || height > screenSize.y
-        val useFixedSize = (prefConfig.stretchVideo && !exceedsScreenSize) || forceFixedSize
+        val useFixedSize = prefConfig.stretchVideo || (forceFixedSize && !exceedsScreenSize)
 
         if (useFixedSize) {
             streamView.setDesiredAspectRatio(0.0)
@@ -1646,18 +2498,159 @@ class Game : Activity(), SurfaceHolder.Callback,
         controllerHandler.handleSetControllerLED(controllerNumber, r, g, b)
     }
 
+    override fun ds5HapticsPcm(frame: Ds5HapticsPcmFrame) {
+        controllerHandler.handleDs5HapticsPcm(frame)
+    }
+
+    private fun prepareFramegenSurface(outputSurface: Surface, showEnabledToast: Boolean) {
+        releaseFramegenCapture()
+
+        val config = FramegenRuntimePlanner.configForStream(
+            defaultPreferences(),
+            prefConfig.width,
+            prefConfig.height,
+            prefConfig.fps,
+            framegenInputHdrEnabled,
+            prefConfig.hdrMode,
+            shouldUseFullRangeHdr(prefConfig.hdrMode)
+        ) ?: return
+        applyFramegenConfig(config)
+        decoderRenderer?.setFramegenCaptureSwitchReady(false)
+
+        val capture = FramegenCapture.create(prefConfig.width, prefConfig.height)
+        if (capture == null) {
+            configureFramegenOutputSurface(null)
+            LimeLog.warning("Framegen capture unavailable; using direct decoder output")
+            return
+        }
+
+        framegenCapture = capture
+        decoderRenderer?.framegenSurface = capture.surface
+        prewarmFramegen(
+            outputSurface,
+            framegenSurfaceGeneration.incrementAndGet()
+        )
+
+        LimeLog.info(
+            "Framegen capture armed ${prefConfig.width}x${prefConfig.height} " +
+                "fps=${config.presentationFps} hdrIn=${config.inputHdrEnabled}"
+        )
+        if (showEnabledToast && !framegenEnabledToastShown) {
+            framegenEnabledToastShown = true
+            runOnUiThread {
+                Toast.makeText(this, R.string.toast_framegen_stream_enabled, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun applyFramegenConfig(config: FramegenRuntimeConfig) {
+        FramegenInterceptor.configureLosslessDllPath(config.losslessDllPath)
+        FramegenInterceptor.configureHdrMode(config.inputHdrMode, config.inputHdrFullRange)
+        FramegenInterceptor.configureOutputFrameRate(config.presentationFps)
+        FramegenInterceptor.configureTuning(
+            config.internalWidth,
+            config.presentMode,
+            config.slowFrameThresholdMs,
+            config.presentQueueMax,
+            config.allowAdaptiveWithoutDoubling
+        )
+        framegenAdaptiveController.configure(
+            FramegenAdaptiveController.Config(
+                inputFps = config.inputFps,
+                presentationFps = config.presentationFps,
+                adaptiveEnabled = config.adaptiveEnabled,
+                allowAdaptiveWithoutDoubling = config.allowAdaptiveWithoutDoubling,
+                internalWidth = config.internalWidth,
+                presentMode = config.presentMode,
+                slowFrameThresholdMs = config.slowFrameThresholdMs,
+                presentQueueMax = config.presentQueueMax
+            )
+        )
+    }
+
+    private fun prewarmFramegen(
+        outputSurface: Surface,
+        generation: Int
+    ) {
+        enqueueFramegenSurfaceTask {
+            val startedAtMs = SystemClock.uptimeMillis()
+            FramegenInterceptor.configureOutputSurface(outputSurface)
+            val ok = FramegenInterceptor.prewarmContext(prefConfig.width, prefConfig.height)
+            if (framegenSurfaceGeneration.get() == generation) {
+                decoderRenderer?.setFramegenCaptureSwitchReady(ok)
+            }
+            LimeLog.info(
+                "Framegen prewarm ok=$ok elapsed=${SystemClock.uptimeMillis() - startedAtMs}ms"
+            )
+        }
+    }
+
+    private fun configureFramegenOutputSurface(surface: Surface?) {
+        enqueueFramegenSurfaceTask {
+            FramegenInterceptor.configureOutputSurface(surface)
+        }
+    }
+
+    private fun enqueueFramegenSurfaceTask(task: () -> Unit) {
+        try {
+            framegenSurfaceExecutor.execute { task() }
+        } catch (e: RejectedExecutionException) {
+            LimeLog.warning("Framegen surface task ignored after shutdown")
+        }
+    }
+
+    private fun releaseFramegenCapture() {
+        framegenSurfaceGeneration.incrementAndGet()
+        framegenCapture?.release()
+        framegenCapture = null
+        framegenAdaptiveController.reset()
+        decoderRenderer?.setFramegenCaptureSwitchReady(false)
+        decoderRenderer?.framegenSurface = null
+        enqueueFramegenSurfaceTask {
+            FramegenInterceptor.configureOutputSurface(null)
+        }
+    }
+
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (!surfaceCreated) {
             throw IllegalStateException("Surface changed before creation!")
         }
 
+        val shouldPrepareFramegen =
+            !attemptedConnection || (connected && framegenCapture == null && shouldUseFramegen())
+
         decoderRenderer?.setRenderTarget(holder)
+
+        if (shouldPrepareFramegen) {
+            prepareFramegenSurface(holder.surface, !attemptedConnection)
+        } else if (framegenCapture != null) {
+            configureFramegenOutputSurface(holder.surface)
+        }
 
         if (!attemptedConnection) {
             attemptedConnection = true
             UiHelper.notifyStreamConnecting(this)
 
-            this.audioRenderer = com.limelight.binding.audio.SmartAudioRenderer(this, prefConfig.enableAudioFx, prefConfig.enableSpatializer, prefConfig.audioPassthroughBufferBytes)
+            val enableSystemAudioHaptics =
+                audioVibrationService?.wantsSystemAudioCoupledDeviceHaptics() == true
+            this.audioRenderer = com.limelight.binding.audio.SmartAudioRenderer(
+                context = this,
+                enableAudioFx = prefConfig.enableAudioFx,
+                enableSpatializer = prefConfig.enableSpatializer,
+                passthroughBufferBytes = prefConfig.audioPassthroughBufferBytes,
+                useAc3Iec61937 = prefConfig.useAc3Iec61937,
+                enableSystemAudioHaptics = enableSystemAudioHaptics,
+                onSystemAudioHapticsActiveChanged = { active ->
+                    audioVibrationService?.setSystemAudioCoupledDeviceActive(active)
+                },
+                onAudioPresentationClock = { framePosition, systemNanoTime, sampleRate ->
+                    audioVibrationService?.updateAudioPresentationClock(
+                        framePosition,
+                        systemNanoTime,
+                        sampleRate
+                    )
+                }
+            )
             conn?.start(this.audioRenderer!!, decoderRenderer!!, this)
 
             streamView.post { cursorServiceManager.syncCursorWithStream() }
@@ -1673,8 +2666,9 @@ class Game : Activity(), SurfaceHolder.Callback,
     override fun surfaceCreated(holder: SurfaceHolder) {
         surfaceCreated = true
 
-        val desiredFrameRate: Float = if (DisplayModeManager.mayReduceRefreshRate(prefConfig) || desiredRefreshRate < prefConfig.fps) {
-            prefConfig.fps.toFloat()
+        val outputFps = framegenPresentationFps()
+        val desiredFrameRate: Float = if (DisplayModeManager.mayReduceRefreshRate(prefConfig) || desiredRefreshRate < outputFps) {
+            outputFps.toFloat()
         } else {
             desiredRefreshRate
         }
@@ -1708,13 +2702,17 @@ class Game : Activity(), SurfaceHolder.Callback,
                     LimeLog.info("Extreme Resume: Audio muted for background.")
                 }
                 decoderRenderer?.pauseProcessing()
+                releaseFramegenCapture()
                 return
             } else {
                 decoderRenderer?.prepareForStop()
+                releaseFramegenCapture()
                 if (connected) {
                     connectionCallbackHandler.stopConnection()
                 }
             }
+        } else {
+            releaseFramegenCapture()
         }
     }
 
@@ -1772,10 +2770,6 @@ class Game : Activity(), SurfaceHolder.Callback,
         StreamNotificationService.stop(this)
     }
 
-    fun refreshLocalCursorState(enabled: Boolean) {
-        cursorServiceManager.refreshLocalCursorState(enabled)
-    }
-
     override fun mouseMove(deltaX: Int, deltaY: Int) {
         conn?.sendMouseMove(deltaX.toShort(), deltaY.toShort())
     }
@@ -1808,6 +2802,45 @@ class Game : Activity(), SurfaceHolder.Callback,
         keyboardInputHandler.keyboardEvent(buttonDown, keyCode)
     }
 
+    override fun touchpadEvent(
+        eventType: Byte,
+        pointerId: Int,
+        x: Float,
+        y: Float,
+        pressure: Float,
+        contactAreaMajor: Float,
+        contactAreaMinor: Float,
+        rotation: Short,
+        deviceWidthMm: Short,
+        deviceHeightMm: Short,
+        buttonState: Byte
+    ) {
+        conn?.sendTouchpadEvent(
+            eventType, pointerId, x, y, pressure,
+            contactAreaMajor, contactAreaMinor, rotation,
+            deviceWidthMm, deviceHeightMm, buttonState
+        )
+    }
+
+    override fun touchpadFrameEvent(
+        contactCount: Byte,
+        eventTypes: ByteArray,
+        pointerIds: IntArray,
+        x: FloatArray,
+        y: FloatArray,
+        pressure: FloatArray,
+        rotation: Short,
+        deviceWidthMm: Short,
+        deviceHeightMm: Short,
+        buttonState: Byte
+    ): Int {
+        return conn?.sendTouchpadFrameEvent(
+            contactCount, eventTypes, pointerIds,
+            x, y, pressure, rotation,
+            deviceWidthMm, deviceHeightMm, buttonState
+        ) ?: MoonBridge.LI_ERR_UNSUPPORTED
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onSystemUiVisibilityChange(visibility: Int) {
         if (!connected) return
@@ -1819,6 +2852,10 @@ class Game : Activity(), SurfaceHolder.Callback,
     }
 
     override fun onPerfUpdateV(performanceInfo: PerformanceInfo) {
+        if (framegenCapture != null) {
+            framegenAdaptiveController.onPerformanceInfo(performanceInfo)
+        }
+        enrichFramegenPerformanceInfo(performanceInfo)
         performanceOverlayManager?.updatePerformanceInfo(performanceInfo)
     }
 
@@ -1827,38 +2864,53 @@ class Game : Activity(), SurfaceHolder.Callback,
     }
 
     override fun onPerfUpdateWG(performanceInfo: PerformanceInfo) {
+        enrichFramegenPerformanceInfo(performanceInfo)
         // 缓存最新性能数据，供 ABR 服务使用
         latestPerfInfo = performanceInfo
 
         runOnUiThread {
-            val currentRxBytes = TrafficStats.getTotalRxBytes()
-            val timeMillis = System.currentTimeMillis()
-            val timeMillisInterval = timeMillis - previousTimeMillis
-
-            if (timeMillisInterval in 1..<5000) {
-                performanceInfo.bandWidth = NetHelper.calculateBandwidth(currentRxBytes, previousRxBytes, timeMillisInterval)
-            }
-
-            previousTimeMillis = timeMillis
-            previousRxBytes = currentRxBytes
-
             if (controllerManager != null && performanceInfoDisplays.isNotEmpty()) {
                 val perfAttrs = HashMap<String, String>()
                 perfAttrs[getString(R.string.perf_decoder)] = performanceInfo.decoder ?: ""
+                perfAttrs[getString(R.string.perf_hdr_format)] = performanceInfo.hdrFormat.displayName
                 perfAttrs[getString(R.string.perf_resolution)] = "${performanceInfo.initialWidth}x${performanceInfo.initialHeight}"
-                perfAttrs[getString(R.string.perf_fps)] = String.format("%.0f", performanceInfo.totalFps)
-                perfAttrs[getString(R.string.perf_frame_loss)] = String.format("%.1f", performanceInfo.lostFrameRate)
-                perfAttrs[getString(R.string.perf_network_rtt)] = String.format("%d", (performanceInfo.rttInfo shr 32).toInt())
-                perfAttrs[getString(R.string.perf_host_latency)] = String.format("%.2f", performanceInfo.aveHostProcessingLatency)
-                perfAttrs[getString(R.string.perf_decode_time)] = String.format("%.2f", performanceInfo.decodeTimeMs)
+                perfAttrs[getString(R.string.perf_fps)] = String.format(Locale.getDefault(), "%.0f", performanceInfo.totalFps)
+                perfAttrs[getString(R.string.perf_rx_fps)] = String.format(Locale.getDefault(), "%.0f", performanceInfo.receivedFps)
+                perfAttrs[getString(R.string.perf_rd_fps)] = String.format(Locale.getDefault(), "%.0f", performanceInfo.renderedFps)
+                perfAttrs[getString(R.string.perf_fg_fps)] = if (performanceInfo.framegenFps > 0.5f) {
+                    String.format(Locale.getDefault(), "%.0f", performanceInfo.framegenFps)
+                } else {
+                    "0"
+                }
+                perfAttrs[getString(R.string.perf_frame_loss)] = String.format(Locale.getDefault(), "%.1f", performanceInfo.lostFrameRate)
+                perfAttrs[getString(R.string.perf_network_rtt)] = String.format(Locale.getDefault(), "%d", (performanceInfo.rttInfo shr 32).toInt())
+                perfAttrs[getString(R.string.perf_host_latency)] = String.format(Locale.getDefault(), "%.2f", performanceInfo.aveHostProcessingLatency)
+                perfAttrs[getString(R.string.perf_decode_time)] = String.format(Locale.getDefault(), "%.2f", performanceInfo.decodeTimeMs)
                 perfAttrs[getString(R.string.perf_bandwidth)] = performanceInfo.bandWidth ?: ""
-                perfAttrs[getString(R.string.perf_render_latency)] = String.format("%.2f", performanceInfo.renderingLatencyMs)
+                perfAttrs[getString(R.string.perf_render_latency)] = String.format(Locale.getDefault(), "%.2f", performanceInfo.renderingLatencyMs)
+                com.limelight.utils.PerformanceTemplateTokens.addCanonicalAliases(perfAttrs)
                 for (display in performanceInfoDisplays) {
                     display.display(perfAttrs)
                 }
             }
         }
     }
+
+    override fun onVideoFrameLoss(framesLost: Int, frameNumber: Int) {
+        if (framegenCapture != null) {
+            framegenAdaptiveController.onFrameLossEvent(framesLost, frameNumber)
+        }
+    }
+
+    private fun enrichFramegenPerformanceInfo(performanceInfo: PerformanceInfo) =
+        FramegenPerformanceEnricher.update(
+            performanceInfo,
+            framegenActive = framegenCapture != null,
+            baseFps = prefConfig.fps,
+            outputFps = framegenAdaptiveController.activePresentationFps
+                .takeIf { it > 0 }
+                ?: framegenPresentationFps()
+        )
 
     fun removePerformanceInfoDisplay(display: PerformanceInfoDisplay) {
         performanceInfoDisplays.remove(display)
@@ -1874,21 +2926,193 @@ class Game : Activity(), SurfaceHolder.Callback,
         updatePipAutoEnter()
     }
 
-    override fun showGameMenu(device: GameInputDevice?) {
-        when (crownSessionController.backKeyMenuMode) {
+    override fun showGameMenu(device: GameInputDevice?): Boolean {
+        return showGameMenuInternal(device, openedFromUsbShortcut = false)
+    }
+
+    private fun showGameMenuInternal(
+        device: GameInputDevice?,
+        openedFromUsbShortcut: Boolean
+    ): Boolean {
+        return when (crownSessionController.backKeyMenuMode) {
             BackKeyMenuMode.CROWN_MODE -> {
                 if (controllerManager != null && prefConfig.enableCrownFeatures) {
                     controllerManager?.superPagesController?.returnOperation()
                 }
+                false
             }
-            BackKeyMenuMode.NO_MENU -> {}
+            BackKeyMenuMode.NO_MENU -> {
+                if (prefConfig.enableCrownFeatures) {
+                    controllerManager?.superPagesController?.returnOperation()
+                }
+                false
+            }
+            BackKeyMenuMode.NO_MENU_LOCKED -> false
             BackKeyMenuMode.GAME_MENU -> {
-                activeGameMenu = GameMenu(this, app, conn!!, device)
+                val existingMenu = activeGameMenu
+                if (existingMenu?.isShowing() == true) {
+                    true
+                } else {
+                    existingMenu?.dismiss()
+                    activeGameMenu = null
+
+                    val menu = GameMenu(this, app, conn!!, device) { dismissedMenu ->
+                        if (activeGameMenu === dismissedMenu) {
+                            activeGameMenu = null
+                        }
+                        if (::controllerHandler.isInitialized) {
+                            controllerHandler.onExternalGameMenuDismissed()
+                        }
+                        // Preserve the opener-specific dismissal callback. USB contexts are also
+                        // covered by the handler-wide reset above; their callback is idempotent.
+                        device?.onGameMenuDismissed()
+                    }
+                    activeGameMenu = menu
+                    val opened = activeGameMenu?.isShowing() == true
+                    if (opened && !openedFromUsbShortcut && ::controllerHandler.isInitialized) {
+                        controllerHandler.onExternalGameMenuOpened()
+                    }
+                    opened
+                }
             }
         }
     }
 
+    override fun showGameMenuFromUsb(device: GameInputDevice): Boolean {
+        return showGameMenuInternal(device, openedFromUsbShortcut = true)
+    }
+
+    override fun dispatchUsbControllerMenuKey(event: KeyEvent): Boolean {
+        crownConfigPicker?.takeIf { it.isShowing }?.let {
+            it.dispatchKeyEvent(event)
+            return true
+        }
+        val menu = activeGameMenu ?: return false
+        if (!menu.dispatchControllerKeyEvent(event)) return false
+        return activeGameMenu === menu && menu.isShowing()
+    }
+
+    override fun dispatchUsbControllerMenuAxes(
+        controllerId: Int,
+        leftStickX: Float,
+        leftStickY: Float,
+        rightStickX: Float,
+        rightStickY: Float
+    ): Boolean {
+        crownConfigPicker?.takeIf { it.isShowing }?.let {
+            it.dispatchAxes(
+                ControllerHandler.usbGameMenuAxisSourceId(controllerId),
+                listOf(leftStickX to leftStickY), rightStickY
+            )
+            return true
+        }
+        val menu = activeGameMenu ?: return false
+        if (!menu.dispatchControllerAxes(
+                sourceId = ControllerHandler.usbGameMenuAxisSourceId(controllerId),
+                axisPairs = listOf(
+                    leftStickX to leftStickY,
+                    rightStickX to rightStickY
+                )
+            )
+        ) {
+            return false
+        }
+        return activeGameMenu === menu && menu.isShowing()
+    }
+
+    override fun releaseControllerMenuAxisSource(sourceId: Int) {
+        crownConfigPicker?.releaseSource(sourceId)
+        activeGameMenu?.releaseControllerAxisSource(sourceId)
+    }
+
+    fun showCrownConfigPicker(names: List<String>, onSelected: (Int) -> Unit, onDismiss: () -> Unit) {
+        if (isFinishing || isDestroyed || names.isEmpty() || crownConfigPicker != null) return
+        val picker = CrownConfigPickerDialog(
+            this, names,
+            readAxes = { event ->
+                (controllerHandler.getGameMenuNavigationAxisPairs(event, includeRightStick = false)
+                    ?: emptyList()) to controllerHandler.getMenuRightStickY(event)
+            },
+            onSelected = onSelected
+        )
+        crownConfigPicker = picker
+        picker.setOnDismissListener {
+            if (crownConfigPicker === picker) {
+                crownConfigPicker = null
+                controllerHandler.onExternalGameMenuDismissed()
+                onDismiss()
+            }
+        }
+        try {
+            picker.show()
+            controllerHandler.onExternalGameMenuOpened()
+        } catch (exception: android.view.WindowManager.BadTokenException) {
+            crownConfigPicker = null
+            onDismiss()
+        }
+    }
+
+    override fun showUsbControllerShortcutHint() {
+        controllerShortcutHintView?.apply {
+            visibility = View.VISIBLE
+            bringToFront()
+        }
+    }
+
+    override fun hideUsbControllerShortcutHint() {
+        controllerShortcutHintView?.visibility = View.GONE
+    }
+
+    private fun installStartHoldWheelOverlay(parent: FrameLayout) {
+        startHoldWheelView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            visibility = View.GONE
+            setOnTouchListener { _, _ -> false }
+            setContent {
+                StartHoldWheelOverlay(
+                    visible = startHoldWheelVisible.value,
+                    selectedAction = startHoldWheelSelection.value,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        parent.addView(
+            startHoldWheelView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+    }
+
+    override fun showStartHoldWheel() {
+        runOnUiThread {
+            startHoldWheelVisible.value = true
+            startHoldWheelView?.visibility = View.VISIBLE
+            startHoldWheelView?.bringToFront()
+        }
+    }
+
+    override fun updateStartHoldWheelSelection(action: StartWheelAction) {
+        runOnUiThread {
+            startHoldWheelSelection.value = action
+        }
+    }
+
+    override fun hideStartHoldWheel() {
+        runOnUiThread {
+            startHoldWheelVisible.value = false
+            startHoldWheelSelection.value = StartWheelAction.CONTINUE
+            startHoldWheelView?.visibility = View.GONE
+        }
+    }
+
     override fun onKey(view: View, keyCode: Int, keyEvent: KeyEvent): Boolean {
+        if (usbForwarding?.consumes(keyEvent.device) == true) return true
         return when (keyEvent.action) {
             KeyEvent.ACTION_DOWN -> keyboardInputHandler.handleKeyDown(keyEvent)
             KeyEvent.ACTION_UP -> keyboardInputHandler.handleKeyUp(keyEvent)
@@ -1901,26 +3125,40 @@ class Game : Activity(), SurfaceHolder.Callback,
         finish()
     }
 
+    @SuppressLint("MissingSuperCall")
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         showGameMenu(null)
     }
 
     fun togglePerformanceOverlay() {
-        if (performanceOverlayManager == null) return
-
-        if (!prefConfig.enablePerfOverlay) {
-            prefConfig.enablePerfOverlay = true
-            prefConfig.perfOverlayLocked = false
-            performanceOverlayManager?.applyOverlayState()
-        } else if (!prefConfig.perfOverlayLocked) {
-            prefConfig.perfOverlayLocked = true
-            performanceOverlayManager?.applyOverlayState()
-        } else {
-            prefConfig.enablePerfOverlay = false
-            prefConfig.perfOverlayLocked = false
-            performanceOverlayManager?.applyOverlayState()
+        val nextMode = when (performanceOverlayMode) {
+            PerformanceOverlayMode.HIDDEN -> PerformanceOverlayMode.FLOATING
+            PerformanceOverlayMode.FLOATING -> PerformanceOverlayMode.LOCKED
+            PerformanceOverlayMode.LOCKED -> PerformanceOverlayMode.HIDDEN
         }
+        setPerformanceOverlayMode(nextMode)
+    }
+
+    enum class PerformanceOverlayMode {
+        HIDDEN,
+        FLOATING,
+        LOCKED
+    }
+
+    val performanceOverlayMode: PerformanceOverlayMode
+        get() = when {
+            !prefConfig.enablePerfOverlay -> PerformanceOverlayMode.HIDDEN
+            prefConfig.perfOverlayLocked -> PerformanceOverlayMode.LOCKED
+            else -> PerformanceOverlayMode.FLOATING
+        }
+
+    fun setPerformanceOverlayMode(mode: PerformanceOverlayMode) {
+        if (performanceOverlayManager == null) return
+        prefConfig.enablePerfOverlay = mode != PerformanceOverlayMode.HIDDEN
+        prefConfig.perfOverlayLocked = mode == PerformanceOverlayMode.LOCKED
+        performanceOverlayManager?.applyOverlayState()
+        prefConfig.writePreferences(this)
     }
 
     fun toggleMicrophoneButton() {
@@ -1935,10 +3173,18 @@ class Game : Activity(), SurfaceHolder.Callback,
         }
     }
 
+    fun handleMicrophoneMenuAction() {
+        if (prefConfig.micMenuActionMode == PreferenceConfiguration.MIC_MENU_ACTION_TOGGLE_MIC) {
+            microphoneManager?.toggleMicrophone()
+                ?: Toast.makeText(this, getString(R.string.toast_enable_mic_redirect), Toast.LENGTH_SHORT).show()
+        } else {
+            toggleMicrophoneButton()
+        }
+    }
+
     fun toggleVirtualController() {
         if (virtualController != null && virtualController?.elements?.isNotEmpty() == true) {
-            val isVisible = virtualController?.elements?.get(0)?.visibility == View.VISIBLE
-            if (isVisible) {
+            if (isVirtualControllerVisible()) {
                 virtualController?.hide()
                 Toast.makeText(this, getString(R.string.toast_virtual_controller_hidden), Toast.LENGTH_SHORT).show()
             } else {
@@ -1949,6 +3195,9 @@ class Game : Activity(), SurfaceHolder.Callback,
             Toast.makeText(this, getString(R.string.toast_virtual_controller_not_enabled), Toast.LENGTH_SHORT).show()
         }
     }
+
+    fun isVirtualControllerVisible(): Boolean =
+        virtualController?.elements?.firstOrNull()?.visibility == View.VISIBLE
 
     fun initializeControllerManager() {
         val manager = controllerManager ?: ControllerManager(streamView.parent as FrameLayout, this)
@@ -1989,6 +3238,7 @@ class Game : Activity(), SurfaceHolder.Callback,
         }
 
     fun getHandleMotionEvent(streamView: StreamView, event: MotionEvent): Boolean {
+        if (usbForwarding?.consumes(event.device) == true) return true
         return touchInputHandler.handleMotionEvent(streamView, event)
     }
 
@@ -2028,7 +3278,6 @@ class Game : Activity(), SurfaceHolder.Callback,
         val EXTRA_APP_CMD = "CmdList"
         val EXTRA_DISPLAY_NAME = "DisplayName"
         val EXTRA_SCREEN_COMBINATION_MODE = "Screen combination mode"
-        val EXTRA_VDD_SCREEN_COMBINATION_MODE = "VDD screen combination mode"
         val EXTRA_FORCE_RESUME_CURRENT_SESSION = "ForceResumeCurrentSession"
 
         private const val KEEP_ALIVE_NOTIFICATION_ID = 1001

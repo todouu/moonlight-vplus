@@ -13,8 +13,12 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.os.SystemClock
+import android.view.Surface
 import android.view.SurfaceHolder
+import com.limelight.BuildConfig
 import com.limelight.LimeLog
+import com.limelight.nvstream.HdrModePolicy
+import com.limelight.nvstream.ColorRangePolicy
 import com.limelight.nvstream.av.video.VideoDecoderRenderer
 import com.limelight.nvstream.jni.MoonBridge
 import com.limelight.preferences.PreferenceConfiguration
@@ -22,9 +26,9 @@ import org.jcodec.codecs.h264.io.model.SeqParameterSet
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class MediaCodecDecoderRenderer(
@@ -34,6 +38,7 @@ class MediaCodecDecoderRenderer(
     private val consecutiveCrashCount: Int,
     meteredData: Boolean,
     requestedHdr: Boolean,
+    initialHdr10PlusRequested: Boolean,
     private val glRenderer: String,
     private val perfListener: PerfOverlayListener
 ) : VideoDecoderRenderer() {
@@ -47,7 +52,14 @@ class MediaCodecDecoderRenderer(
         private const val CR_RECOVERY_TYPE_FLUSH = 1
         private const val CR_RECOVERY_TYPE_RESTART = 2
         private const val CR_RECOVERY_TYPE_RESET = 3
+        private const val MAX_DECODER_CONFIGURATION_TRIES = 8
 
+        // Dolby Vision Profile 8 (DvheSt). Deliberately NOT DvheDtb, which is
+        // Profile 7.
+        @SuppressLint("InlinedApi")
+        private const val DV_PROFILE_DVHE_ST =
+            MediaCodecInfo.CodecProfileLevel.DolbyVisionProfileDvheSt
+        private const val DV_COLOR_MODE_KEY = "feature-oplus-dolby-vision-color-mode"
         // Each thread that touches the MediaCodec object or any associated buffers must have a flag
         // here and must call doCodecRecoveryIfRequired() on a regular basis.
         private const val CR_FLAG_INPUT_THREAD = 0x1
@@ -56,6 +68,12 @@ class MediaCodecDecoderRenderer(
         private const val CR_FLAG_ALL = CR_FLAG_INPUT_THREAD or CR_FLAG_RENDER_THREAD or CR_FLAG_CHOREOGRAPHER
 
         private const val EXCEPTION_REPORT_DELAY_MS = 3000
+        private const val FRAMEGEN_SURFACE_SWITCH_MAX_RETRIES = 20
+        private const val FRAMEGEN_SURFACE_SWITCH_RETRY_DELAY_MS = 50L
+        // Vendor codecs expose far fewer input buffers in practice. The generous fixed capacity
+        // keeps the steady-state queue allocation-free without risking normal callback loss.
+        private const val ASYNC_INPUT_BUFFER_QUEUE_CAPACITY = 256
+
     }
 
     // Used on versions < 5.0
@@ -64,6 +82,7 @@ class MediaCodecDecoderRenderer(
 
     private val avcDecoder: MediaCodecInfo?
     private val hevcDecoder: MediaCodecInfo?
+    private val dolbyVisionDecoder: MediaCodecInfo?
     private val av1Decoder: MediaCodecInfo?
 
     private val vpsBuffers = ArrayList<ByteArray>()
@@ -79,6 +98,8 @@ class MediaCodecDecoderRenderer(
     private val context: Context = activity
     private val activity: Activity = activity
     private var videoDecoder: MediaCodec? = null
+    @Volatile
+    private var dolbyVisionRoutingActive = false
     private var rendererThread: Thread? = null
     private var needsSpsBitstreamFixup = false
     private var isExynos4 = false
@@ -89,6 +110,30 @@ class MediaCodecDecoderRenderer(
     private var refFrameInvalidationAvc = false
     private var refFrameInvalidationHevc = false
     private var refFrameInvalidationAv1 = false
+    private var requestedHdr10Plus = false
+    private val hdr10PlusOutputObserver = Hdr10PlusOutputObserver()
+    private val hdrProfileSelector = HdrDecoderProfileSelector(
+        width = prefs.width,
+        height = prefs.height,
+        frameRate = prefs.fps,
+        fullRange = prefs.fullRange,
+    )
+    private val hevcHdr10PlusFormatSupported by lazy {
+        hdrProfileSelector.supportsHdr10PlusFormat(
+            hevcDecoder,
+            HdrDecoderProfileSelector.MIME_HEVC,
+        )
+    }
+    private val av1Hdr10PlusFormatSupported by lazy {
+        hdrProfileSelector.supportsHdr10PlusFormat(
+            av1Decoder,
+            HdrDecoderProfileSelector.MIME_AV1,
+        )
+    }
+    private val hevcHdr10PlusEligible: Boolean
+        get() = requestedHdr10Plus && hevcHdr10PlusFormatSupported
+    private val av1Hdr10PlusEligible: Boolean
+        get() = requestedHdr10Plus && av1Hdr10PlusFormatSupported
     private val optimalSlicesPerFrame: Byte
     private var refFrameInvalidationActive = false
 
@@ -105,6 +150,19 @@ class MediaCodecDecoderRenderer(
     private var initialHeight = 0
     private var videoFormat = 0
     private var renderTarget: SurfaceHolder? = null
+    /**
+     * 阶段 3 framegen 注入点：非 null 时，MediaCodec.configure() 用该 Surface 替代
+     * renderTarget.surface，把解码帧导向 ImageReader 而不是直接上屏。null 表示走原路径。
+     * 仅在 decoder 未配置（[configureAndStartDecoder] 调用前）期间设置才生效；
+     * 运行中切换需要先 [pauseProcessing] / [resumeProcessing]。
+     */
+    @Volatile
+    var framegenSurface: Surface? = null
+    @Volatile
+    private var framegenOutputSwitchPending = false
+    private val framegenOutputSwitchReady = AtomicBoolean(false)
+    private val framegenOutputSwitchRequested = AtomicBoolean(false)
+    private val framegenOutputSwitchRetryCount = AtomicInteger(0)
     @Volatile
     private var stopping = false
     private var reportedCrash = false
@@ -120,6 +178,7 @@ class MediaCodecDecoderRenderer(
 
     private var inputFormat: MediaFormat? = null
     private var outputFormat: MediaFormat? = null
+    private val stableOutputFormatTracker = StableOutputFormatTracker()
     private var configuredFormat: MediaFormat? = null
 
     private var needsBaselineSpsHack = false
@@ -137,10 +196,26 @@ class MediaCodecDecoderRenderer(
     private var lastFrameNumber = 0
     private var refreshRate = 0
 
-    // Map to track enqueue time for each timestamp
-    // Key: timestamp in microseconds (from enqueueTimeUs)
-    // Value: enqueue time in milliseconds (from SystemClock.uptimeMillis())
-    private val timestampToEnqueueTime: MutableMap<Long, Long> = ConcurrentHashMap()
+    // Fixed primitive ring: local codec PTS -> enqueue time and host cadence PTS.
+    // This metadata is bounded by codec in-flight buffers and accessed across input/output threads.
+    private val frameTimestampTracker = FrameTimestampTracker()
+
+    // 本地单调 timestampUs(送入 MediaCodec 的 PTS) -> host 节奏 PTS(presentationTimeUs, 微秒)
+    // host PTS 源自主机捕获时刻(见 common-c RtpVideoQueue.c: packet->timestamp * 1000 / PTS_DIVISOR)，
+    // 是三端同源的呈现节奏基准。之前在 JNI 边界被丢弃，现打通供 host-cadence pacing 使用。
+    // ---- host-cadence 去抖呈现时钟(alpha-beta / PI 时钟恢复，移植自鸿蒙 native_render，已离线仿真验证) ----
+    // 默认关闭：置 true 前，全部走原有 pacing，行为零变化。开启后在偏平滑档用 host PTS 复现主机出帧节奏，
+    // 消除"本地 vsync 网格 vs 主机节奏"错拍造成的微判抖；代价是自适应缓冲延迟(净 LAN≈1ms，抖动网络更大)。
+    // TODO(on-device): 接入设置项/按网络自适应开启，并在真机上标定 Kp/Ki/cushion。
+    private val useHostCadencePacing = false
+    // host PTS 仅由异步输出回调消费；直渲染档或 PRECISE_SYNC 两步呈现激活时维护旁路映射。
+    private val needsHostPtsMapping: Boolean
+        get() = asyncModeEnabled &&
+            (useHostCadencePacing || framePacingController.isHostCadencePreciseSyncActive())
+    // 直渲染档(MAX_SMOOTHNESS/CAP_FPS)无 vsync snap 兜底：一帧迟到即可见 hitch，故用较大 cushion
+    // (3×MAD, floor 1ms)覆盖抖动分布。PRECISE_SYNC 路径(有 snap)将另建低 cushion 实例。
+    private val hostCadenceClock =
+        HostCadenceClock(cushionMul = 3.0, cushionFloorNs = 1_000_000L, enableDebugStats = BuildConfig.DEBUG)
 
     // Frame pacing and performance management (extracted)
     private val framePacingController: FramePacingController
@@ -151,7 +226,7 @@ class MediaCodecDecoderRenderer(
 
     // Async codec mode (API 30+): eliminates polling overhead for input/output buffers
     private var asyncModeEnabled = false
-    private var availableInputBuffers: LinkedBlockingQueue<Int>? = null
+    private var availableInputBuffers: ArrayBlockingQueue<Int>? = null
     private var codecCallbackThread: HandlerThread? = null
     private var codecCallbackHandler: Handler? = null
 
@@ -331,6 +406,95 @@ class MediaCodecDecoderRenderer(
         this.renderTarget = renderTarget
     }
 
+    fun setFramegenCaptureSwitchReady(ready: Boolean) {
+        framegenOutputSwitchReady.set(ready)
+        if (ready) {
+            requestFramegenOutputSurfaceSwitch("framegen prewarm ready")
+        }
+    }
+
+    private fun requestFramegenOutputSurfaceSwitch(reason: String) {
+        if (!framegenOutputSwitchPending || stopping) {
+            return
+        }
+        if (!framegenOutputSwitchReady.get()) {
+            return
+        }
+        if (!framegenOutputSwitchRequested.compareAndSet(false, true)) {
+            return
+        }
+
+        val switchAction = Runnable {
+            val targetSurface = framegenSurface
+            val decoder = videoDecoder
+            if (!framegenOutputSwitchPending || stopping || targetSurface == null || decoder == null) {
+                framegenOutputSwitchPending = false
+                framegenOutputSwitchRetryCount.set(0)
+                return@Runnable
+            }
+
+            val startMs = SystemClock.uptimeMillis()
+            try {
+                applyHdrDataSpace(targetSurface, "framegen capture")
+                decoder.setOutputSurface(targetSurface)
+                framegenOutputSwitchPending = false
+                framegenOutputSwitchRetryCount.set(0)
+                LimeLog.info(
+                    "Framegen delayed capture switch to ImageReader after $reason " +
+                        "elapsed=${SystemClock.uptimeMillis() - startMs}ms"
+                )
+            } catch (t: Throwable) {
+                val retry = framegenOutputSwitchRetryCount.incrementAndGet()
+                if (!stopping && retry <= FRAMEGEN_SURFACE_SWITCH_MAX_RETRIES) {
+                    framegenOutputSwitchRequested.set(false)
+                    LimeLog.warning(
+                        "Framegen delayed capture switch retry $retry/" +
+                            "$FRAMEGEN_SURFACE_SWITCH_MAX_RETRIES after $reason: " +
+                            "${t.javaClass.simpleName}: ${t.message}"
+                    )
+                    val retryAction = Runnable {
+                        requestFramegenOutputSurfaceSwitch("$reason retry")
+                    }
+                    codecCallbackHandler?.postDelayed(
+                        retryAction,
+                        FRAMEGEN_SURFACE_SWITCH_RETRY_DELAY_MS
+                    ) ?: retryAction.run()
+                    return@Runnable
+                }
+                framegenOutputSwitchPending = false
+                framegenOutputSwitchRetryCount.set(0)
+                LimeLog.warning(
+                    "Framegen delayed capture switch failed after $reason: " +
+                        "${t.javaClass.simpleName}: ${t.message}; staying on direct SurfaceView"
+                )
+            }
+        }
+
+        codecCallbackHandler?.post(switchAction) ?: switchAction.run()
+    }
+
+    private fun applyHdrDataSpace(surface: Surface, reason: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || hdrDataSpace == 0) {
+            return
+        }
+
+        val result = MoonBridge.nativeSetSurfaceDataSpace(surface, hdrDataSpace)
+        LimeLog.info(
+            "Surface DataSpace ($reason): 0x${Integer.toHexString(hdrDataSpace)} result=$result"
+        )
+    }
+
+    private fun reapplyHdrDataSpaceIfChanged(surface: Surface, reason: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || hdrDataSpace == 0) {
+            return
+        }
+
+        val currentDataSpace = MoonBridge.nativeGetSurfaceDataSpace(surface)
+        if (currentDataSpace != hdrDataSpace) {
+            applyHdrDataSpace(surface, reason)
+        }
+    }
+
     init {
         //dumpDecoders()
 
@@ -364,12 +528,24 @@ class MediaCodecDecoderRenderer(
             LimeLog.info("No HEVC decoder found")
         }
 
+        // Presence-only probe; the strict resolution/fps validation happened in
+        // Game.kt before the DV capability bit was ever reported to the host.
+        dolbyVisionDecoder = MediaCodecHelper.findProbableSafeDecoder(
+            "video/dolby-vision", DV_PROFILE_DVHE_ST)
+        if (dolbyVisionDecoder != null) {
+            LimeLog.info("Selected Dolby Vision decoder: " + dolbyVisionDecoder.name)
+        } else {
+            LimeLog.info("No Dolby Vision decoder found")
+        }
+
         av1Decoder = findAv1Decoder(prefs)
         if (av1Decoder != null) {
             LimeLog.info("Selected AV1 decoder: " + av1Decoder.name)
         } else {
             LimeLog.info("No AV1 decoder found")
         }
+
+        setHdr10PlusRequested(initialHdr10PlusRequested)
 
         // Set attributes that are queried in getCapabilities(). This must be done here
         // because getCapabilities() may be called before setup() in current versions of the common
@@ -424,52 +600,51 @@ class MediaCodecDecoderRenderer(
 
     fun isAvcSupported(): Boolean = avcDecoder != null
 
-    fun isHevcMain10Supported(): Boolean {
-        if (hevcDecoder == null) {
-            return false
-        }
+    fun isHevcMain10Supported(): Boolean = hdrProfileSelector.supportsHevcMain10(hevcDecoder)
 
-        for (profileLevel in hevcDecoder.getCapabilitiesForType("video/hevc").profileLevels) {
-            if (profileLevel.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) {
-                LimeLog.info("HEVC decoder " + hevcDecoder.name + " supports HEVC Main10")
-                return true
-            }
-        }
-        return false
-    }
+    fun isHevcMain10Hdr10Supported(): Boolean = hdrProfileSelector.supportsHevcHdr10(hevcDecoder)
 
-    fun isHevcMain10Hdr10Supported(): Boolean {
-        if (hevcDecoder == null) {
-            return false
-        }
+    fun isHevcMain10Hdr10PlusSupported(): Boolean =
+        hdrProfileSelector.supportsHevcHdr10Plus(hevcDecoder)
 
-        for (profileLevel in hevcDecoder.getCapabilitiesForType("video/hevc").profileLevels) {
-            if (profileLevel.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
-                profileLevel.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus
-            ) {
-                LimeLog.info("HEVC 解码器 " + hevcDecoder.name + " 支持 HEVC Main10 HDR10/HDR10+")
-                return true
-            }
-        }
+    internal fun isHevcHdr10PlusEligible(): Boolean = hevcHdr10PlusEligible
 
-        return false
+    /** Reconciles the HDR10+ request with the final stream negotiation before capability query. */
+    internal fun setHdr10PlusRequested(enabled: Boolean) {
+        if (requestedHdr10Plus == enabled) return
+
+        val wasRequested = requestedHdr10Plus
+        requestedHdr10Plus = enabled
+        if (enabled) {
+            LimeLog.info(
+                "HDR10+ eligibility: HEVC=$hevcHdr10PlusEligible AV1=$av1Hdr10PlusEligible " +
+                    "(API=${Build.VERSION.SDK_INT})"
+            )
+        } else if (wasRequested) {
+            LimeLog.info("HDR10+ request cleared after final HDR negotiation fallback")
+        }
     }
 
     fun isAv1Supported(): Boolean = av1Decoder != null
 
-    fun isAv1Main10Supported(): Boolean {
-        if (av1Decoder == null) {
-            return false
-        }
+    fun isAv1Main10Supported(): Boolean = hdrProfileSelector.supportsAv1Main10(av1Decoder)
 
-        for (profileLevel in av1Decoder.getCapabilitiesForType("video/av01").profileLevels) {
-            if (profileLevel.profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10) {
-                LimeLog.info("AV1 decoder " + av1Decoder.name + " supports AV1 Main 10 HDR10")
-                return true
-            }
-        }
+    fun isAv1Main10Hdr10Supported(): Boolean = hdrProfileSelector.supportsAv1Hdr10(av1Decoder)
 
-        return false
+    fun isAv1Main10Hdr10PlusSupported(): Boolean =
+        hdrProfileSelector.supportsAv1Hdr10Plus(av1Decoder)
+
+    internal fun isAv1Hdr10PlusEligible(): Boolean = av1Hdr10PlusEligible
+
+    private fun handleOutputFormatChanged(format: MediaFormat, source: String) {
+        outputFormat = format
+
+        if (!stableOutputFormatTracker.record(format)) return
+
+        LimeLog.info("Output format changed ($source): $format")
+        renderTarget?.surface?.let {
+            reapplyHdrDataSpaceIfChanged(it, "$source format change")
+        }
     }
 
     fun getPreferredColorSpace(): Int {
@@ -488,11 +663,7 @@ class MediaCodecDecoderRenderer(
     }
 
     fun getPreferredColorRange(): Int {
-        return if (prefs.fullRange) {
-            MoonBridge.COLOR_RANGE_FULL
-        } else {
-            MoonBridge.COLOR_RANGE_LIMITED
-        }
+        return ColorRangePolicy.fromPreference(prefs.fullRange)
     }
 
     fun notifyVideoForeground() {
@@ -542,7 +713,7 @@ class MediaCodecDecoderRenderer(
 
         // 重新创建异步回调线程（如果需要）
         if (asyncModeEnabled && codecCallbackThread == null) {
-            availableInputBuffers = LinkedBlockingQueue()
+            availableInputBuffers = ArrayBlockingQueue(ASYNC_INPUT_BUFFER_QUEUE_CAPACITY)
             codecCallbackThread = HandlerThread("Video - Codec", Process.THREAD_PRIORITY_DISPLAY)
             codecCallbackThread!!.start()
             codecCallbackHandler = Handler(codecCallbackThread!!.looper)
@@ -567,6 +738,11 @@ class MediaCodecDecoderRenderer(
             videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate)
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            videoFormat.setInteger(MediaFormat.KEY_ALLOW_FRAME_DROP, 1)
+            LimeLog.info("Decoder MediaFormat: KEY_ALLOW_FRAME_DROP enabled")
+        }
+
         // Populate keys for adaptive playback
         if (adaptivePlayback) {
             videoFormat.setInteger(MediaFormat.KEY_MAX_WIDTH, initialWidth)
@@ -575,16 +751,9 @@ class MediaCodecDecoderRenderer(
 
         // Android 7.0 adds color options to the MediaFormat
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            // HLG content from Sunshine uses FULL range. Using LIMITED causes dark images
-            // because the HLG OETF/EOTF is applied to the wrong value range on most decoders.
-            val useFullRange: Boolean
-            if ((getActiveVideoFormat() and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0 &&
-                prefs.hdrMode == MoonBridge.HDR_MODE_HLG
-            ) {
-                useFullRange = true
-            } else {
-                useFullRange = (getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL)
-            }
+            // Match the range requested from the host. HLG and PQ describe transfer
+            // functions, not quantization ranges, so neither overrides this preference.
+            val useFullRange = ColorRangePolicy.isFullRange(getPreferredColorRange())
             videoFormat.setInteger(
                 MediaFormat.KEY_COLOR_RANGE,
                 if (useFullRange) MediaFormat.COLOR_RANGE_FULL else MediaFormat.COLOR_RANGE_LIMITED
@@ -619,7 +788,41 @@ class MediaCodecDecoderRenderer(
         return videoFormat
     }
 
+    private fun getDecoderProfileCandidates(
+        mimeType: String,
+        selectedDecoderInfo: MediaCodecInfo,
+    ): List<Int?> {
+        val activeHdr10PlusEligible = if (mimeType == HdrDecoderProfileSelector.MIME_HEVC ||
+            mimeType == HdrDecoderProfileSelector.MIME_AV1
+        ) {
+            val activeFullRange = ColorRangePolicy.isFullRange(getPreferredColorRange())
+            val activeSelector = hdrProfileSelector.forStreamParameters(
+                width = initialWidth,
+                height = initialHeight,
+                frameRate = if (refreshRate > 0) refreshRate else prefs.fps,
+                fullRange = activeFullRange,
+            )
+            requestedHdr10Plus &&
+                HdrModePolicy.isHdr10PlusMode(prefs.hdrMode) &&
+                (getActiveVideoFormat() and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0 &&
+                activeSelector.supportsHdr10PlusFormat(selectedDecoderInfo, mimeType)
+        } else {
+            false
+        }
+
+        return hdrProfileSelector.buildCandidates(
+            mimeType = mimeType,
+            decoderInfo = selectedDecoderInfo,
+            isTenBit = (getActiveVideoFormat() and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0,
+            isPqHdr = HdrModePolicy.isPqMode(prefs.hdrMode),
+            hdr10PlusEligible = activeHdr10PlusEligible,
+        )
+    }
+
     private fun configureAndStartDecoder(format: MediaFormat) {
+        hdr10PlusOutputObserver.restartCodecConfiguration()
+        stableOutputFormatTracker.reset()
+
         // Set HDR metadata if present
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             if (currentHdrMetadata != null) {
@@ -675,30 +878,38 @@ class MediaCodecDecoderRenderer(
 
         LimeLog.info("Configuring with format: $format")
 
-        videoDecoder!!.configure(format, renderTarget!!.surface, null, 0)
+        // Framegen starts on the direct SurfaceView, then switches to ImageReader
+        // after the first visible frame. Native framegen presents back to this same
+        // SurfaceView and mirrors the HDR dataspace when HDR passthrough is active.
+        val pendingFramegenSurface = framegenSurface
+        framegenOutputSwitchRequested.set(false)
+        framegenOutputSwitchRetryCount.set(0)
+        framegenOutputSwitchPending =
+            pendingFramegenSurface != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+        val outSurface = if (framegenOutputSwitchPending) {
+            LimeLog.info(
+                "Framegen delayed capture active: decoder starts on SurfaceView " +
+                    "and will switch to ImageReader after first direct frame"
+            )
+            renderTarget!!.surface
+        } else {
+            if (pendingFramegenSurface != null) {
+                LimeLog.info("Framegen capture surface active (decoder output redirected to ImageReader)")
+            }
+            pendingFramegenSurface ?: renderTarget!!.surface
+        }
+        videoDecoder!!.configure(format, outSurface, null, 0)
 
         // Set DataSpace on the output Surface for HDR content.
         // Equivalent to HarmonyOS OH_NativeWindow_SetColorSpace().
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             (getActiveVideoFormat() and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0
         ) {
-            // HLG always uses FULL range (its OETF/EOTF requires it)
-            val isFullRange = (prefs.hdrMode == MoonBridge.HDR_MODE_HLG) ||
-                (getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL)
-            if (prefs.hdrMode == MoonBridge.HDR_MODE_HLG) {
-                hdrDataSpace = if (isFullRange)
-                    MoonBridge.DATASPACE_BT2020_HLG_FULL
-                else
-                    MoonBridge.DATASPACE_BT2020_HLG_LIMITED
-            } else {
-                hdrDataSpace = if (isFullRange)
-                    MoonBridge.DATASPACE_BT2020_PQ_FULL
-                else
-                    MoonBridge.DATASPACE_BT2020_PQ_LIMITED
-            }
-            val result = MoonBridge.nativeSetSurfaceDataSpace(renderTarget!!.surface, hdrDataSpace)
-            LimeLog.info("Surface DataSpace: 0x" + Integer.toHexString(hdrDataSpace) +
-                " result=" + result)
+            hdrDataSpace = ColorRangePolicy.hdrDataSpace(
+                prefs.hdrMode,
+                getPreferredColorRange(),
+            )
+            applyHdrDataSpace(renderTarget!!.surface, "decoder output")
         }
 
         configuredFormat = format
@@ -708,7 +919,7 @@ class MediaCodecDecoderRenderer(
         vpsBuffers.clear()
         spsBuffers.clear()
         ppsBuffers.clear()
-        timestampToEnqueueTime.clear()
+        clearTimestampTracking()
 
         // This will contain the actual accepted input format attributes
         inputFormat = videoDecoder!!.inputFormat
@@ -718,6 +929,10 @@ class MediaCodecDecoderRenderer(
 
         // Start the decoder
         videoDecoder!!.start()
+        hdr10PlusOutputObserver.onCodecStarted()
+        if (framegenOutputSwitchPending && framegenOutputSwitchReady.get()) {
+            requestFramegenOutputSurfaceSwitch("decoder started after framegen prewarm")
+        }
     }
 
     private fun tryConfigureDecoder(
@@ -726,6 +941,7 @@ class MediaCodecDecoderRenderer(
         throwOnCodecError: Boolean
     ): Boolean {
         var configured = false
+        dolbyVisionRoutingActive = false
         try {
             videoDecoder = MediaCodec.createByCodecName(selectedDecoderInfo.name)
 
@@ -733,6 +949,10 @@ class MediaCodecDecoderRenderer(
             setupAsyncCallback()
 
             configureAndStartDecoder(format)
+            dolbyVisionRoutingActive =
+                isDolbyVisionMime(format.getString(MediaFormat.KEY_MIME)) &&
+                    format.containsKey(DV_COLOR_MODE_KEY) &&
+                    format.getInteger(DV_COLOR_MODE_KEY) == 1
             LimeLog.info("Using codec " + selectedDecoderInfo.name + " for hardware decoding " + format.getString(MediaFormat.KEY_MIME))
             configured = true
         } catch (e: IllegalArgumentException) {
@@ -759,9 +979,104 @@ class MediaCodecDecoderRenderer(
         return configured
     }
 
+    private fun isDolbyVisionMime(mimeType: String?): Boolean =
+        mimeType == "video/dolby-vision"
+
+    /**
+     * Whether this session should ride the HEVC base layer through the native
+     * video/dolby-vision decoder: the host negotiated Dolby Vision Profile
+     * 8.1 (PQ base) or 8.4 (HLG base), a DvheSt decoder was found, and the
+     * stream is 10-bit (the RPU only pairs with Main10). Direct-surface
+     * output is implicit: frame generation is already incompatible with HDR
+     * input, and DV requests were gated on framegen being off at connection
+     * time.
+     */
+    private fun isDolbyVisionRoutingEligible(): Boolean =
+        dolbyVisionDecoder != null &&
+            (videoFormat and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0 &&
+            (MoonBridge.getNegotiatedDynamicHdrFormat() == MoonBridge.NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_81 ||
+                MoonBridge.getNegotiatedDynamicHdrFormat() == MoonBridge.NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_84)
+
+    private fun initializeDolbyVisionDecoder(): Int {
+        val dvDecoder = dolbyVisionDecoder ?: return -1
+        val mimeType = "video/dolby-vision"
+
+        adaptivePlayback = MediaCodecHelper.decoderSupportsAdaptivePlayback(dvDecoder, mimeType)
+        fusedIdrFrame = MediaCodecHelper.decoderSupportsFusedIdrFrame(dvDecoder, mimeType)
+
+        // The stream is HEVC; RPU semantics match the HEVC invalidation model.
+        refFrameInvalidationActive = refFrameInvalidationHevc
+
+        hdr10PlusOutputObserver.beginCodecConfiguration(false)
+
+        // Signaling ladder for engaging the native DV display path. Each entry
+        // is tried (with the low-latency option sweep) before falling back:
+        //  1. dvcC record + OPPO color-mode vendor key — the OPPO/Qualcomm
+        //     c2.qti.dv.decoder declares <Feature name="oplus-dolby-vision-
+        //     color-mode"/> in media_codecs_dolby_vision.xml, so the non-secure
+        //     path can switch the DV mapping on; it reports the mode in the
+        //     output format as feature-oplus-dolby-vision-color-mode.
+        //  2. color-mode vendor key alone.
+        //  3. Plain Annex-B (approach 1): decodes, but devices that need the
+        //     signaling above present the compatibility BL as HDR10.
+        // The dvcC payload describes exactly what our RPU carries: profile 8,
+        // level 30, rpu_present=1, el_present=0, bl_present=1. The base-layer
+        // compatibility id follows the negotiated profile — 1 (HDR10/PQ) for
+        // 8.1, 4 (HLG) for 8.4 — because telling the DV display engine an HLG
+        // base is PQ-compatible maps it with the wrong EOTF.
+        val dv84Negotiated =
+            MoonBridge.getNegotiatedDynamicHdrFormat() == MoonBridge.NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_84
+        val dvcC = ByteBuffer.wrap(
+            byteArrayOf(0x01, 0x00, 0x10, 0xF5.toByte(), if (dv84Negotiated) 0x40 else 0x10))
+        val attempts: List<Pair<String, (MediaFormat) -> Unit>> = listOf(
+            "dvcC+colorMode" to { f ->
+                f.setByteBuffer("csd-0", dvcC)
+                f.setInteger(DV_COLOR_MODE_KEY, 1)
+            },
+            "colorMode" to { f -> f.setInteger(DV_COLOR_MODE_KEY, 1) },
+            "plain" to { },
+        )
+
+        for ((label, applyExtras) in attempts) {
+            var tryNumber = 0
+            while (true) {
+                LimeLog.info("Decoder configuration try: profile=DvheSt+$label options=$tryNumber")
+
+                val attemptFormat = createBaseMediaFormat(mimeType)
+                attemptFormat.setInteger(MediaFormat.KEY_PROFILE, DV_PROFILE_DVHE_ST)
+                applyExtras(attemptFormat)
+
+                val newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(
+                    attemptFormat,
+                    dvDecoder,
+                    tryNumber,
+                    prefs.forceMtkMaxOperatingRate,
+                    mimeType,
+                    prefs.hevcLowLatencyMode,
+                    hdr10PlusModeSelected = false,
+                )
+
+                val isLastTry = !newFormat || tryNumber >= MAX_DECODER_CONFIGURATION_TRIES - 1
+                if (tryConfigureDecoder(dvDecoder, attemptFormat, false)) {
+                    LimeLog.info("Dolby Vision decoder configured: ${dvDecoder.name} " +
+                        "(signaling=$label, nativeMapping=$dolbyVisionRoutingActive)")
+                    return 0
+                }
+
+                if (isLastTry) {
+                    break
+                }
+                tryNumber++
+            }
+            LimeLog.warning("Dolby Vision signaling '$label' rejected by decoder; trying next")
+        }
+        return -5
+    }
+
     fun initializeDecoder(throwOnCodecError: Boolean): Int {
         val mimeType: String
         val selectedDecoderInfo: MediaCodecInfo
+        dolbyVisionRoutingActive = false
 
         if ((videoFormat and MoonBridge.VIDEO_FORMAT_MASK_H264) != 0) {
             mimeType = "video/avc"
@@ -800,13 +1115,32 @@ class MediaCodecDecoderRenderer(
                 isExynos4, hevcDecoder != null, av1Decoder != null
             )
         } else if ((videoFormat and MoonBridge.VIDEO_FORMAT_MASK_H265) != 0) {
-            mimeType = "video/hevc"
-            selectedDecoderInfo = hevcDecoder ?: run {
-                LimeLog.severe("No available HEVC decoder!")
-                return -2
+            // Dolby Vision Profile 8 routing: the wire stream is HEVC either
+            // way, but configuring the device's video/dolby-vision decoder lets
+            // the terminal Dolby engine consume the RPU and perform the tone
+            // mapping. Falls back to the plain HEVC decoder on any configure
+            // failure — the base layer remains decodable.
+            var dolbyVisionDecoderConfigured = false
+            if (isDolbyVisionRoutingEligible()) {
+                if (initializeDolbyVisionDecoder() == 0) {
+                    dolbyVisionDecoderConfigured = true
+                } else {
+                    LimeLog.warning("Dolby Vision decoder configuration failed; falling back to HEVC")
+                }
             }
 
-            refFrameInvalidationActive = refFrameInvalidationHevc
+            if (dolbyVisionDecoderConfigured) {
+                mimeType = "video/dolby-vision"
+                selectedDecoderInfo = dolbyVisionDecoder!!
+            } else {
+                mimeType = "video/hevc"
+                selectedDecoderInfo = hevcDecoder ?: run {
+                    LimeLog.severe("No available HEVC decoder!")
+                    return -2
+                }
+
+                refFrameInvalidationActive = refFrameInvalidationHevc
+            }
         } else if ((videoFormat and MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0) {
             mimeType = "video/av01"
             selectedDecoderInfo = av1Decoder ?: run {
@@ -824,38 +1158,82 @@ class MediaCodecDecoderRenderer(
         adaptivePlayback = MediaCodecHelper.decoderSupportsAdaptivePlayback(selectedDecoderInfo, mimeType)
         fusedIdrFrame = MediaCodecHelper.decoderSupportsFusedIdrFrame(selectedDecoderInfo, mimeType)
 
-        var tryNumber = 0
-        while (true) {
-            LimeLog.info("Decoder configuration try: $tryNumber")
+        var decoderConfigured = false
+        if (isDolbyVisionMime(mimeType)) {
+            // initializeDolbyVisionDecoder() already configured the codec; the
+            // shared tail below still owns post-configure setup.
+            decoderConfigured = true
+        } else {
+            val profileCandidates = getDecoderProfileCandidates(mimeType, selectedDecoderInfo)
+            hdr10PlusOutputObserver.beginCodecConfiguration(false)
 
-            val mediaFormat = createBaseMediaFormat(mimeType)
+            profileLoop@ for ((profileIndex, profile) in profileCandidates.withIndex()) {
+                var tryNumber = 0
+                while (true) {
+                    LimeLog.info(
+                        "Decoder configuration try: profile=${hdrProfileSelector.profileName(mimeType, profile)} " +
+                            "options=$tryNumber"
+                    )
 
-            // This will try low latency options until we find one that works (or we give up).
-            val newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(
-                mediaFormat,
-                selectedDecoderInfo,
-                tryNumber,
-                prefs.forceMtkMaxOperatingRate
-            )
+                    val mediaFormat = createBaseMediaFormat(mimeType)
+                    if (profile != null) {
+                        mediaFormat.setInteger(MediaFormat.KEY_PROFILE, profile)
+                    }
+                    val configuringHdr10Plus = hdrProfileSelector.isHdr10PlusProfile(mimeType, profile)
+                    hdr10PlusOutputObserver.beginCodecConfiguration(configuringHdr10Plus)
 
-            // Throw the underlying codec exception on the last attempt if the caller requested it
-            if (tryConfigureDecoder(selectedDecoderInfo, mediaFormat, !newFormat && throwOnCodecError)) {
-                // Success!
+                    // Try low latency options while omitting Qualcomm output fences for HDR10+.
+                    val newFormat = MediaCodecHelper.setDecoderLowLatencyOptions(
+                        mediaFormat,
+                        selectedDecoderInfo,
+                        tryNumber,
+                        prefs.forceMtkMaxOperatingRate,
+                        mimeType,
+                        prefs.hevcLowLatencyMode,
+                        hdr10PlusModeSelected = HdrModePolicy.isHdr10PlusMode(prefs.hdrMode),
+                    )
 
-                // Check LinearBlock copy-free compatibility (API 30+)
-                // Disabled: Many vendor HEVC/HDR decoders have LinearBlock bugs causing crashes
-                linearBlockEnabled = false
+                    val isLastProfile = profileIndex == profileCandidates.lastIndex
+                    if (tryConfigureDecoder(
+                            selectedDecoderInfo,
+                            mediaFormat,
+                            !newFormat && isLastProfile && throwOnCodecError,
+                        )
+                    ) {
+                        decoderConfigured = true
+                        break@profileLoop
+                    }
 
-                break
+                    hdr10PlusOutputObserver.beginCodecConfiguration(false)
+
+                    if (!newFormat || tryNumber >= MAX_DECODER_CONFIGURATION_TRIES - 1) {
+                        break
+                    }
+                    tryNumber++
+                }
+
+                if (profileIndex < profileCandidates.lastIndex) {
+                    LimeLog.warning(
+                        "Decoder rejected ${hdrProfileSelector.profileName(mimeType, profile)} profile; trying " +
+                            hdrProfileSelector.profileName(mimeType, profileCandidates[profileIndex + 1])
+                    )
+                }
             }
-
-            if (!newFormat) {
-                // We couldn't even configure a decoder without any low latency options
-                return -5
-            }
-
-            tryNumber++
         }
+
+        if (!decoderConfigured) {
+            return -5
+        }
+
+        if (hdr10PlusOutputObserver.snapshot().configured) {
+            LimeLog.info("HDR10+ decoder profile configured for $mimeType")
+        } else if (requestedHdr10Plus && mimeType == "video/hevc" && hevcHdr10PlusEligible) {
+            LimeLog.warning("HDR10+ profile fallback active; HEVC SEI remains preserved for this connection")
+        }
+
+        // Check LinearBlock copy-free compatibility (API 30+)
+        // Disabled: Many vendor HEVC/HDR decoders have LinearBlock bugs causing crashes
+        linearBlockEnabled = false
 
         if (USE_FRAME_RENDER_TIME && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             videoDecoder!!.setOnFrameRenderedListener({ _, presentationTimeUs, renderTimeNanos ->
@@ -863,6 +1241,7 @@ class MediaCodecDecoderRenderer(
                 if (!firstFrameDelivered) {
                     firstFrameDelivered = true
                     try { firstFrameCallback?.invoke() } catch (_: Throwable) {}
+                    requestFramegenOutputSurfaceSwitch("first rendered frame")
                 }
 
                 // presentationTimeUs: 我们告诉系统这一帧应该在什么时间点显示
@@ -893,7 +1272,7 @@ class MediaCodecDecoderRenderer(
         // Async codec mode (API 30+)
         this.asyncModeEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
         if (asyncModeEnabled) {
-            availableInputBuffers = LinkedBlockingQueue()
+            availableInputBuffers = ArrayBlockingQueue(ASYNC_INPUT_BUFFER_QUEUE_CAPACITY)
             codecCallbackThread = HandlerThread("Video - Codec", Process.THREAD_PRIORITY_DISPLAY)
             codecCallbackThread!!.start()
             codecCallbackHandler = Handler(codecCallbackThread!!.looper)
@@ -1167,22 +1546,32 @@ class MediaCodecDecoderRenderer(
 
     /**
      * Delivers a decoded frame to the appropriate output path based on frame pacing mode.
-     * Used by both async callbacks and the sync renderer thread.
+     * Called only from the async output callback (onOutputBufferAvailable); the sync
+     * renderer thread in startRendererThread() releases output buffers directly and does
+     * not go through this method.
      */
-    private fun deliverDecodedFrame(bufferIndex: Int) {
+    private fun deliverDecodedFrame(bufferIndex: Int, hostPtsUs: Long = -1L) {
         if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_BALANCED ||
             prefs.framePacing == PreferenceConfiguration.FRAME_PACING_EXPERIMENTAL_LOW_LATENCY ||
             prefs.framePacing == PreferenceConfiguration.FRAME_PACING_PRECISE_SYNC
         ) {
             // Buffered modes - queue for frame pacing controller
-            framePacingController.offerOutputBuffer(bufferIndex)
+            framePacingController.offerOutputBuffer(bufferIndex, hostPtsUs)
         } else {
             // Direct render modes (MIN_LATENCY, MAX_SMOOTHNESS, CAP_FPS)
             try {
                 if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ||
                     prefs.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS
                 ) {
-                    videoDecoder!!.releaseOutputBuffer(bufferIndex, 0)
+                    if (useHostCadencePacing && hostPtsUs >= 0) {
+                        // host-cadence 呈现：按主机出帧节奏复现，去抖时钟给出精确呈现时刻。
+                        // 偏平滑档(MAX_SMOOTHNESS/CAP_FPS)权衡少量缓冲延迟换取无判抖，语义相符。
+                        val fps = if (refreshRate > 0) refreshRate else 60
+                        val frameIntervalNs = 1_000_000_000L / fps
+                        videoDecoder!!.releaseOutputBuffer(bufferIndex, hostCadenceClock.presentTimeNs(hostPtsUs, frameIntervalNs))
+                    } else {
+                        videoDecoder!!.releaseOutputBuffer(bufferIndex, 0)
+                    }
                 } else {
                     videoDecoder!!.releaseOutputBuffer(bufferIndex, System.nanoTime())
                 }
@@ -1193,6 +1582,7 @@ class MediaCodecDecoderRenderer(
                 if (!firstFrameDelivered) {
                     firstFrameDelivered = true
                     try { firstFrameCallback?.invoke() } catch (_: Throwable) {}
+                    requestFramegenOutputSurfaceSwitch("first released frame")
                 }
             } catch (e: IllegalStateException) {
                 handleDecoderException(e)
@@ -1212,7 +1602,10 @@ class MediaCodecDecoderRenderer(
         videoDecoder!!.setCallback(object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
                 if (!stopping) {
-                    availableInputBuffers!!.offer(index)
+                    if (!availableInputBuffers!!.offer(index)) {
+                        LimeLog.warning("Async input buffer queue overflow; flushing decoder")
+                        codecRecoveryType.compareAndSet(CR_RECOVERY_TYPE_NONE, CR_RECOVERY_TYPE_FLUSH)
+                    }
                 }
             }
 
@@ -1220,6 +1613,15 @@ class MediaCodecDecoderRenderer(
                 if (stopping) return
 
                 numFramesOut++
+                hdr10PlusOutputObserver.observeOutput(codec, index, info.presentationTimeUs)
+
+                // Deliver to frame pacing. Remove the host PTS before decoder-time tracking,
+                // because calculateDecoderTime() removes the paired enqueue entry.
+                val hostPtsUs = if (needsHostPtsMapping) {
+                    frameTimestampTracker.takeHostPresentationTime(info.presentationTimeUs, -1L)
+                } else {
+                    -1L
+                }
 
                 // Calculate decoder time
                 val delta = calculateDecoderTime(info.presentationTimeUs)
@@ -1230,8 +1632,7 @@ class MediaCodecDecoderRenderer(
                     }
                 }
 
-                // Deliver to frame pacing
-                deliverDecodedFrame(index)
+                deliverDecodedFrame(index, hostPtsUs)
 
                 doCodecRecoveryIfRequired(CR_FLAG_RENDER_THREAD)
             }
@@ -1242,20 +1643,7 @@ class MediaCodecDecoderRenderer(
             }
 
             override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
-                LimeLog.info("Output format changed (async)")
-                outputFormat = format
-                LimeLog.info("New output format: $outputFormat")
-
-                // Re-apply DataSpace after format change
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-                    hdrDataSpace != 0 && renderTarget != null
-                ) {
-                    val currentDataSpace = MoonBridge.nativeGetSurfaceDataSpace(renderTarget!!.surface)
-                    if (currentDataSpace != hdrDataSpace) {
-                        MoonBridge.nativeSetSurfaceDataSpace(renderTarget!!.surface, hdrDataSpace)
-                        LimeLog.info("Re-applied Surface DataSpace: 0x" + Integer.toHexString(hdrDataSpace))
-                    }
-                }
+                handleOutputFormatChanged(format, "async")
             }
         }, codecCallbackHandler)
     }
@@ -1278,6 +1666,7 @@ class MediaCodecDecoderRenderer(
                         // Try to output a frame
                         var outIndex = videoDecoder!!.dequeueOutputBuffer(info, 50000)
                         if (outIndex >= 0) {
+                            hdr10PlusOutputObserver.observeOutput(videoDecoder!!, outIndex, info.presentationTimeUs)
                             var presentationTimeUs = info.presentationTimeUs
                             var lastIndex = outIndex
 
@@ -1290,6 +1679,7 @@ class MediaCodecDecoderRenderer(
                             ) {
                                 // Get the last output buffer in the queue
                                 while (videoDecoder!!.dequeueOutputBuffer(info, 0).also { outIndex = it } >= 0) {
+                                    hdr10PlusOutputObserver.observeOutput(videoDecoder!!, outIndex, info.presentationTimeUs)
                                     videoDecoder!!.releaseOutputBuffer(lastIndex, false)
 
                                     numFramesOut++
@@ -1330,20 +1720,7 @@ class MediaCodecDecoderRenderer(
                         } else {
                             when (outIndex) {
                                 MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                                    LimeLog.info("Output format changed")
-                                    outputFormat = videoDecoder!!.outputFormat
-                                    LimeLog.info("New output format: $outputFormat")
-
-                                    // Re-apply DataSpace after format change — some decoders reset it
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-                                        hdrDataSpace != 0 && renderTarget != null
-                                    ) {
-                                        val currentDataSpace = MoonBridge.nativeGetSurfaceDataSpace(renderTarget!!.surface)
-                                        if (currentDataSpace != hdrDataSpace) {
-                                            MoonBridge.nativeSetSurfaceDataSpace(renderTarget!!.surface, hdrDataSpace)
-                                            LimeLog.info("Re-applied Surface DataSpace: 0x" + Integer.toHexString(hdrDataSpace))
-                                        }
-                                    }
+                                    handleOutputFormatChanged(videoDecoder!!.outputFormat, "sync")
                                 }
                                 MediaCodec.INFO_TRY_AGAIN_LATER -> {}
                                 else -> {}
@@ -1420,6 +1797,14 @@ class MediaCodecDecoderRenderer(
             return false
         }
 
+        // prepareForStop() deliberately breaks the input-buffer wait above. If the codec was
+        // backpressured for several seconds (for example after heavy packet loss), deltaMs may
+        // exceed the decoder-hang threshold by the time the user exits the stream. Treating that
+        // expected shutdown wake-up as a hang records a false decoder crash on the next launch.
+        if (stopping) {
+            return false
+        }
+
         val deltaMs = (SystemClock.uptimeMillis() - startTime).toInt()
 
         if (deltaMs >= 20) {
@@ -1460,7 +1845,7 @@ class MediaCodecDecoderRenderer(
         stopping = true
 
         // Clear timestamp tracking map
-        timestampToEnqueueTime.clear()
+        clearTimestampTracking()
 
         // Halt the rendering thread
         rendererThread?.interrupt()
@@ -1497,6 +1882,7 @@ class MediaCodecDecoderRenderer(
     }
 
     override fun cleanup() {
+        dolbyVisionRoutingActive = false
         if (videoDecoder != null) {
             try {
                 videoDecoder!!.release()
@@ -1505,7 +1891,7 @@ class MediaCodecDecoderRenderer(
                 LimeLog.warning("Exception during decoder release: " + e.message)
             }
         }
-        timestampToEnqueueTime.clear()
+        clearTimestampTracking()
 
         // Stop codec callback thread (async mode)
         if (codecCallbackThread != null) {
@@ -1515,6 +1901,23 @@ class MediaCodecDecoderRenderer(
     }
 
     override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
+        // The enabled flag is the authoritative stream HDR state. Static metadata may be absent
+        // for HLG, NVIDIA GameStream, or a valid Sunshine HDR transition.
+        hdr10PlusOutputObserver.onHostHdrMode(enabled)
+
+        // Dolby Vision mastering and mapping updates are carried in-band by the RPU.
+        // Restarting an active DV codec for generic HDR static metadata can leave some
+        // Qualcomm components with stale output-buffer IDs and a permanently black Surface.
+        if (dolbyVisionRoutingActive) {
+            // Keep the latest host metadata available if a later codec recovery must fall
+            // back to HEVC. With no host metadata, the existing default metadata path remains.
+            if (enabled && hdrMetadata != null) {
+                currentHdrMetadata = hdrMetadata
+            }
+            LimeLog.info("Dolby Vision HDR state updated without codec restart: enabled=$enabled")
+            return
+        }
+
         // HDR metadata is only supported in Android 7.0 and later, so don't bother
         // restarting the codec on anything earlier than that.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -1569,12 +1972,16 @@ class MediaCodecDecoderRenderer(
         }
     }
 
-    private fun queueNextInputBuffer(timestampUs: Long, codecFlags: Int): Boolean {
+    private fun queueNextInputBuffer(
+        timestampUs: Long,
+        codecFlags: Int,
+        hostPresentationTimeUs: Long = -1L,
+    ): Boolean {
         val codecRecovered: Boolean
 
         try {
             // Record the enqueue time for this timestamp
-            timestampToEnqueueTime[timestampUs] = SystemClock.uptimeMillis()
+            recordQueuedTimestamp(timestampUs, codecFlags, hostPresentationTimeUs)
 
             if (linearBlockEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 // Modern QueueRequest API with LinearBlock for potential copy-free path
@@ -1649,6 +2056,26 @@ class MediaCodecDecoderRenderer(
         return fetchNextInputBuffer()
     }
 
+    private fun recordQueuedTimestamp(
+        timestampUs: Long,
+        codecFlags: Int,
+        hostPresentationTimeUs: Long,
+    ) {
+        if ((codecFlags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) return
+
+        val trackHostPresentationTime = needsHostPtsMapping && hostPresentationTimeUs >= 0
+        frameTimestampTracker.recordFrame(
+            timestampUs,
+            SystemClock.uptimeMillis(),
+            hostPresentationTimeUs,
+            trackHostPresentationTime,
+        )
+    }
+
+    private fun clearTimestampTracking() {
+        frameTimestampTracker.clear()
+    }
+
     @Suppress("deprecation")
     override fun submitDecodeUnit(
         decodeUnitData: ByteArray,
@@ -1658,7 +2085,8 @@ class MediaCodecDecoderRenderer(
         frameType: Int,
         frameHostProcessingLatency: Char,
         receiveTimeUs: Long,
-        enqueueTimeUs: Long
+        enqueueTimeUs: Long,
+        hostPresentationTimeUs: Long
     ): Int {
         if (stopping || isProcessingPaused) {
             // Don't bother if we're stopping or paused
@@ -1676,12 +2104,14 @@ class MediaCodecDecoderRenderer(
 
         if (lastFrameNumber == 0) {
             activeWindowVideoStats.measurementStartTimestamp = SystemClock.uptimeMillis()
-        } else if (frameNumber != lastFrameNumber && frameNumber != lastFrameNumber + 1) {
+        } else if (frameNumber > lastFrameNumber + 1) {
             // We can receive the same "frame" multiple times if it's an IDR frame.
             // In that case, each frame start NALU is submitted independently.
-            activeWindowVideoStats.framesLost += frameNumber - lastFrameNumber - 1
-            activeWindowVideoStats.totalFrames += frameNumber - lastFrameNumber - 1
+            val framesLost = frameNumber - lastFrameNumber - 1
+            activeWindowVideoStats.framesLost += framesLost
+            activeWindowVideoStats.totalFrames += framesLost
             activeWindowVideoStats.frameLossEvents++
+            perfListener.onVideoFrameLoss(framesLost, frameNumber)
         }
 
         // Reset CSD data for each IDR frame
@@ -1738,7 +2168,24 @@ class MediaCodecDecoderRenderer(
             performanceInfo.lostFrameRate = lostFrameRate
             performanceInfo.rttInfo = rttInfo
             performanceInfo.framesWithHostProcessingLatency = frameHostProcessingLatency.code
-            performanceInfo.isHdrActive = (currentHdrMetadata != null) // 基于实际HDR元数据状态
+            val hdr10PlusRuntime = hdr10PlusOutputObserver.snapshot()
+            val negotiatedDynamicHdr = MoonBridge.getNegotiatedDynamicHdrFormat()
+            performanceInfo.hdrFormat = StreamHdrFormatPolicy.resolve(
+                hdrEnabled = hdr10PlusRuntime.streamState == HdrStreamState.ENABLED,
+                hdrStateKnown = hdr10PlusRuntime.streamState != HdrStreamState.UNKNOWN,
+                isTenBitStream = (videoFormat and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0,
+                isPqHdr = HdrModePolicy.isPqMode(prefs.hdrMode),
+                // An 8.4 selection whose negotiation fell through still rides
+                // an HLG base layer — classify it as HLG, never SDR.
+                isHlg = prefs.hdrMode == MoonBridge.HDR_MODE_HLG ||
+                    prefs.hdrMode == MoonBridge.HDR_MODE_DOLBY_VISION_84,
+                hdr10PlusConfigured = hdr10PlusRuntime.configured,
+                hdr10PlusMetadataObserved = hdr10PlusRuntime.metadataObserved,
+                dolbyVisionNegotiated = negotiatedDynamicHdr ==
+                    MoonBridge.NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_81,
+                dolbyVisionNegotiatedHlg = negotiatedDynamicHdr ==
+                    MoonBridge.NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_84,
+            )
             performanceInfo.minHostProcessingLatency = minHostProcessingLatency
             performanceInfo.maxHostProcessingLatency = maxHostProcessingLatency
             performanceInfo.aveHostProcessingLatency = aveHostProcessingLatency
@@ -1914,7 +2361,7 @@ class MediaCodecDecoderRenderer(
         // Copy data from our buffer list into the input buffer
         nextInputBuffer!!.put(decodeUnitData, 0, decodeUnitLength)
 
-        if (!queueNextInputBuffer(timestampUs, codecFlags)) {
+        if (!queueNextInputBuffer(timestampUs, codecFlags, hostPresentationTimeUs)) {
             return MoonBridge.DR_NEED_IDR
         }
 
@@ -1953,6 +2400,12 @@ class MediaCodecDecoderRenderer(
             capabilities = capabilities or MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1
         }
 
+        // common-c strips prepended HEVC SEI by default for legacy renderer compatibility.
+        // Opt in only after the display/decoder HDR10+ preflight succeeds.
+        if (hevcHdr10PlusEligible) {
+            capabilities = capabilities or MoonBridge.CAPABILITY_PRESERVE_HEVC_SEI
+        }
+
         // Enable direct submit on supported hardware
         if (directSubmit) {
             capabilities = capabilities or MoonBridge.CAPABILITY_DIRECT_SUBMIT
@@ -1962,16 +2415,49 @@ class MediaCodecDecoderRenderer(
     }
 
     internal fun createDiagnostics(): RendererDiagnostics {
+        val hdr10PlusRuntime = hdr10PlusOutputObserver.snapshot()
+        val hdr10PlusSnapshot = hdr10PlusRuntime.metadata
         return RendererDiagnostics(
-            numVpsIn, numSpsIn, numPpsIn, numFramesIn, numFramesOut,
-            videoFormat, initialWidth, initialHeight, refreshRate,
-            prefs.bitrate, prefs.framePacing, consecutiveCrashCount,
-            adaptivePlayback, refFrameInvalidationActive, fusedIdrFrame,
-            glRenderer, avcDecoder, hevcDecoder, av1Decoder,
-            configuredFormat, inputFormat, outputFormat,
-            globalVideoStats.totalFramesReceived.toLong(), globalVideoStats.totalFramesRendered.toLong(),
-            globalVideoStats.framesLost.toLong(), globalVideoStats.frameLossEvents.toLong(),
-            getAverageEndToEndLatency(), getAverageDecoderLatency()
+            numVpsIn = numVpsIn,
+            numSpsIn = numSpsIn,
+            numPpsIn = numPpsIn,
+            numFramesIn = numFramesIn,
+            numFramesOut = numFramesOut,
+            videoFormat = videoFormat,
+            initialWidth = initialWidth,
+            initialHeight = initialHeight,
+            refreshRate = refreshRate,
+            bitrate = prefs.bitrate,
+            framePacing = prefs.framePacing,
+            consecutiveCrashCount = consecutiveCrashCount,
+            adaptivePlayback = adaptivePlayback,
+            refFrameInvalidationActive = refFrameInvalidationActive,
+            fusedIdrFrame = fusedIdrFrame,
+            hdr10PlusEligible = when {
+                (videoFormat and MoonBridge.VIDEO_FORMAT_MASK_H265) != 0 -> hevcHdr10PlusEligible
+                (videoFormat and MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0 -> av1Hdr10PlusEligible
+                else -> false
+            },
+            hdr10PlusConfigured = hdr10PlusRuntime.configured,
+            hdr10PlusOutputFramesQueried = hdr10PlusSnapshot.outputFramesQueried,
+            hdr10PlusMetadataFrames = hdr10PlusSnapshot.metadataFrames,
+            hdr10PlusMetadataChanges = hdr10PlusSnapshot.metadataChanges,
+            hdr10PlusLastMetadataSize = hdr10PlusSnapshot.lastMetadataSize,
+            hdr10PlusLastPresentationTimeUs = hdr10PlusSnapshot.lastPresentationTimeUs,
+            hdr10PlusMetadataQueryFailures = hdr10PlusSnapshot.queryFailures,
+            glRenderer = glRenderer,
+            avcDecoder = avcDecoder,
+            hevcDecoder = hevcDecoder,
+            av1Decoder = av1Decoder,
+            configuredFormat = configuredFormat,
+            inputFormat = inputFormat,
+            outputFormat = outputFormat,
+            totalFramesReceived = globalVideoStats.totalFramesReceived.toLong(),
+            totalFramesRendered = globalVideoStats.totalFramesRendered.toLong(),
+            framesLost = globalVideoStats.framesLost.toLong(),
+            frameLossEvents = globalVideoStats.frameLossEvents.toLong(),
+            averageEndToEndLatency = getAverageEndToEndLatency(),
+            averageDecoderLatency = getAverageDecoderLatency(),
         )
     }
 
@@ -2024,8 +2510,8 @@ class MediaCodecDecoderRenderer(
     // Returns: decoder time in milliseconds
     private fun calculateDecoderTime(presentationTimeUs: Long): Long {
         // Look up the enqueue time for this timestamp (stored in milliseconds)
-        val enqueueTimeMs = timestampToEnqueueTime.remove(presentationTimeUs)
-        if (enqueueTimeMs != null) {
+        val enqueueTimeMs = frameTimestampTracker.takeEnqueueTime(presentationTimeUs, -1L)
+        if (enqueueTimeMs >= 0) {
             val delta = SystemClock.uptimeMillis() - enqueueTimeMs
             return if (delta > 0 && delta < 1000) delta else 0
         }

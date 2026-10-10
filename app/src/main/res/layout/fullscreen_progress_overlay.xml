@@ -16,11 +16,11 @@
             android:scaleType="centerCrop" />
 
         <!-- 中间完整图片 -->
-        <ImageView
+        <com.limelight.utils.AcrylicImageView
             android:id="@+id/appPosterBackgroundClear"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:scaleType="centerCrop" />
+            android:scaleType="fitCenter" />
 
     </FrameLayout>
 
@@ -64,10 +64,10 @@
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="8dp"
-                android:progressTint="@color/theme_pink_primary"
+                android:progressTint="?attr/appAccent"
                 android:progressBackgroundTint="#33FFFFFF"
                 android:indeterminate="true"
-                android:indeterminateTint="@color/theme_pink_primary" />
+                android:indeterminateTint="?attr/appAccent" />
 
             <!-- 进度文字 -->
             <TextView

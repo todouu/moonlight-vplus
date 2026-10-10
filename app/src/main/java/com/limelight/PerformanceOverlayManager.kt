@@ -2,6 +2,7 @@ package com.limelight
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.res.ColorStateList
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Canvas
@@ -9,7 +10,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
-import android.net.TrafficStats
+import android.os.SystemClock
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -25,8 +26,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 import androidx.appcompat.app.AlertDialog
@@ -34,12 +37,15 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 
 import com.limelight.binding.video.PerformanceInfo
+import com.limelight.nvstream.jni.MoonBridge
 import com.limelight.preferences.PerfOverlayDisplayItemsPreference
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.ui.StreamView
+import com.limelight.utils.AppDialogStyler
+import com.limelight.utils.BandwidthMeter
 import com.limelight.utils.MoonPhaseUtils
-import com.limelight.utils.NetHelper
 import com.limelight.utils.UiHelper
+import com.limelight.utils.formatBandwidthSpeed
 
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -52,7 +58,8 @@ import kotlin.math.sqrt
 
 class PerformanceOverlayManager(
     private val activity: Activity,
-    private val prefConfig: PreferenceConfiguration
+    private val prefConfig: PreferenceConfiguration,
+    private val onJitterMonitorChanged: (Boolean) -> Unit = {}
 ) {
 
     private var performanceOverlayView: LinearLayout? = null
@@ -86,10 +93,7 @@ class PerformanceOverlayManager(
         BOTTOM_LEFT, BOTTOM_CENTER, BOTTOM_RIGHT
     }
 
-    // 计算带宽用
-    private var previousTimeMillis = 0L
-    private var previousRxBytes = 0L
-    private var lastValidBandwidth = "N/A"
+    private val bandwidthMeter = BandwidthMeter()
 
     // 月相缓存
     private var currentMoonPhaseIcon = "🌙"
@@ -103,6 +107,7 @@ class PerformanceOverlayManager(
 
     // 电量更新相关
     private var lastBatteryUpdateTime = 0L
+    private var hasDisplayableBattery = false
 
     // 串流电量统计
     private var streamStartBatteryLevel = -1
@@ -282,7 +287,13 @@ class PerformanceOverlayManager(
     }
 
     fun recordStreamStart() {
-        streamStartBatteryLevel = UiHelper.getBatteryLevel(activity)
+        bandwidthMeter.reset()
+        hasDisplayableBattery = UiHelper.hasDisplayableBattery(activity)
+        streamStartBatteryLevel = if (hasDisplayableBattery) {
+            UiHelper.getBatteryLevel(activity)
+        } else {
+            -1
+        }
         streamStartTime = System.currentTimeMillis()
         lastBatteryUpdateTime = streamStartTime
         activity.runOnUiThread { updateBatteryViewIfVisible() }
@@ -304,35 +315,17 @@ class PerformanceOverlayManager(
     }
 
     private fun updateBandwidthInfo(performanceInfo: PerformanceInfo) {
-        val currentRxBytes = TrafficStats.getTotalRxBytes()
-        val timeMillis = System.currentTimeMillis()
-        val timeMillisInterval = timeMillis - previousTimeMillis
-
-        val calculatedBandwidth = NetHelper.calculateBandwidth(currentRxBytes, previousRxBytes, timeMillisInterval)
-
-        if (timeMillisInterval > 5000) {
-            performanceInfo.bandWidth = lastValidBandwidth
-            previousTimeMillis = timeMillis
-            previousRxBytes = currentRxBytes
-            return
-        }
-
-        if (calculatedBandwidth != "0 K/s") {
-            performanceInfo.bandWidth = calculatedBandwidth
-            lastValidBandwidth = calculatedBandwidth
-            previousTimeMillis = timeMillis
-        } else {
-            performanceInfo.bandWidth = lastValidBandwidth
-        }
-
-        previousRxBytes = currentRxBytes
+        val bandwidthMbps = bandwidthMeter.update(
+            MoonBridge.getRtpVideoBytesReceived(),
+            SystemClock.elapsedRealtimeNanos()
+        )
+        performanceInfo.bandWidth = bandwidthMbps?.let(::formatBandwidthSpeed) ?: "N/A"
     }
 
     private fun buildDecoderInfo(performanceInfo: PerformanceInfo): String {
         val decoderTypeInfo = getDecoderTypeInfo(performanceInfo.decoder)
-        // NBSP (\u00A0) 防止 TextView 在 "H265 HDR" 的空格处断行
-        return if (performanceInfo.isHdrActive) "${decoderTypeInfo.shortName}\u00A0HDR"
-               else decoderTypeInfo.shortName
+        // NBSP (\u00A0) keeps the codec and dynamic-range format on one line.
+        return "${decoderTypeInfo.shortName}\u00A0${performanceInfo.hdrFormat.displayName}"
     }
 
     private fun getCurrentMoonPhaseIcon(): String {
@@ -441,14 +434,13 @@ class PerformanceOverlayManager(
             PerformanceItem.NETWORK_LATENCY -> updateNetworkLatencyText(itemInfo.view!!, performanceInfo)
             PerformanceItem.DECODE_LATENCY -> updateDecodeLatencyText(itemInfo.view!!, performanceInfo)
             PerformanceItem.HOST_LATENCY -> updateHostLatencyText(itemInfo.view!!, performanceInfo)
-            PerformanceItem.BATTERY -> updateBatteryText(itemInfo.view!!)
+            PerformanceItem.BATTERY -> Unit
             PerformanceItem.ONE_PERCENT_LOW -> updateOnePercentLowText(itemInfo.view!!, performanceInfo)
         }
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateResolutionText(view: TextView, performanceInfo: PerformanceInfo) {
-        val resValue = String.format("%dx%d@%.0f",
+        val resValue = String.format(Locale.getDefault(), "%dx%d@%.0f",
             performanceInfo.initialWidth, performanceInfo.initialHeight, performanceInfo.totalFps)
         val moonIcon = getCurrentMoonPhaseIcon()
         // 月相位置保持与原版一致：用 emoji 作为前缀图标
@@ -462,46 +454,46 @@ class PerformanceOverlayManager(
         view.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateRenderFpsText(view: TextView, performanceInfo: PerformanceInfo) {
         // NBSP + Word Joiner 围绕 / 防止 TextView 在 "Rx 60 / Rd 60" 任意空格或斜杠处断行
-        val fpsValue = String.format("Rx\u00A0%.0f\u00A0\u2060/\u2060\u00A0Rd\u00A0%.0f",
-            performanceInfo.receivedFps, performanceInfo.renderedFps)
+        val fpsValue = if (performanceInfo.framegenFps > 0.5f) {
+            String.format(Locale.getDefault(), "Rx\u00A0%.0f\u00A0\u2060/\u2060\u00A0Rd\u00A0%.0f\u00A0\u2060/\u2060\u00A0FG\u00A0%.0f",
+                performanceInfo.receivedFps, performanceInfo.renderedFps, performanceInfo.framegenFps)
+        } else {
+            String.format(Locale.getDefault(), "Rx\u00A0%.0f\u00A0\u2060/\u2060\u00A0Rd\u00A0%.0f",
+                performanceInfo.receivedFps, performanceInfo.renderedFps)
+        }
         // 原版本本行无图标
         view.text = createStyledText(null, fpsValue, "FPS", 0xFF0DDAF4.toInt(), textSizePx = view.textSize)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updatePacketLossText(view: TextView, performanceInfo: PerformanceInfo) {
-        val lossValue = String.format("%.2f", performanceInfo.lostFrameRate)
+        val lossValue = String.format(Locale.getDefault(), "%.2f", performanceInfo.lostFrameRate)
         val lossColor = if (performanceInfo.lostFrameRate < 5.0f) 0xFF7D9D7D.toInt() else 0xFFB57D7D.toInt()
         view.text = createStyledText(R.drawable.phc_perf_signal, lossValue, "%", lossColor, textSizePx = view.textSize)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateNetworkLatencyText(view: TextView, performanceInfo: PerformanceInfo) {
         // 带宽用 gauge 仪表盘图标更直观，始终显示
         val iconRes: Int = R.drawable.phc_perf_gauge
-        val bandwidthAndLatency = String.format("%s\u00A0\u00A0\u00A0%d\u00A0\u00B1\u00A0%d",
+        val bandwidthAndLatency = String.format(Locale.getDefault(), "%s\u00A0\u00A0\u00A0%d\u00A0\u00B1\u00A0%d",
             performanceInfo.bandWidth,
             (performanceInfo.rttInfo shr 32).toInt(),
             performanceInfo.rttInfo.toInt())
         view.text = createStyledText(iconRes, bandwidthAndLatency, "ms", 0xFFBCEDD3.toInt(), textSizePx = view.textSize)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateDecodeLatencyText(view: TextView, performanceInfo: PerformanceInfo) {
         val isHot = performanceInfo.decodeTimeMs >= 15
         val iconRes: Int? = if (isHot) null else R.drawable.phc_perf_timer
         val iconEmoji: String? = if (isHot) "🥵" else null
-        val latencyValue = String.format("%.2f", performanceInfo.decodeTimeMs)
+        val latencyValue = String.format(Locale.getDefault(), "%.2f", performanceInfo.decodeTimeMs)
         view.text = createStyledText(iconRes, latencyValue, "ms", 0xFFD597E3.toInt(), iconEmoji, textSizePx = view.textSize)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateHostLatencyText(view: TextView, performanceInfo: PerformanceInfo) {
         if (performanceInfo.framesWithHostProcessingLatency > 0) {
-            val latencyValue = String.format("%.1f", performanceInfo.aveHostProcessingLatency)
+            val latencyValue = String.format(Locale.getDefault(), "%.1f", performanceInfo.aveHostProcessingLatency)
             view.text = createStyledText(R.drawable.phc_perf_monitor, latencyValue, "ms", 0xFF009688.toInt(), textSizePx = view.textSize)
         } else {
             // 空置时保持原版本的 🧋 emoji
@@ -510,6 +502,11 @@ class PerformanceOverlayManager(
     }
 
     private fun updateBatteryText(view: TextView) {
+        if (!hasDisplayableBattery) {
+            view.visibility = View.GONE
+            return
+        }
+
         val batteryLevel = UiHelper.getBatteryLevel(activity)
         val isCharging = UiHelper.isCharging(activity)
         val batteryColor = when {
@@ -529,14 +526,13 @@ class PerformanceOverlayManager(
         view.text = createStyledText(iconRes, batteryLevel.toString(), "%", batteryColor, textSizePx = view.textSize)
     }
 
-    @SuppressLint("DefaultLocale")
     private fun updateOnePercentLowText(view: TextView, performanceInfo: PerformanceInfo) {
         val lowFps = performanceInfo.onePercentLowFps
         if (lowFps <= 0) {
             view.text = createStyledText(null, "1%Low\u00A0—", "FPS", 0xFFFF7043.toInt(), textSizePx = view.textSize)
             return
         }
-        val value = String.format("1%%Low\u00A0%.1f", lowFps)
+        val value = String.format(Locale.getDefault(), "1%%Low\u00A0%.1f", lowFps)
         val color = when {
             lowFps >= performanceInfo.renderedFps * 0.9f -> 0xFF90EE90.toInt()
             lowFps >= performanceInfo.renderedFps * 0.7f -> 0xFFFFD740.toInt()
@@ -546,6 +542,10 @@ class PerformanceOverlayManager(
     }
 
     private fun showBatteryInfo() {
+        if (!hasDisplayableBattery) {
+            return
+        }
+
         val batteryLevel = UiHelper.getBatteryLevel(activity)
         val isCharging = UiHelper.isCharging(activity)
         val status = activity.getString(
@@ -563,22 +563,30 @@ class PerformanceOverlayManager(
         val streamDurationSeconds = if (hasStreamData) (System.currentTimeMillis() - streamStartTime) / 1000 else 0L
 
         if (isCharging) {
-            info.append("\n\n⚡ 设备正在充电中")
+            info.append("\n\n⚡ ").append(activity.getString(R.string.perf_battery_charging))
             if (hasStreamData) {
-                info.append("\n串流时长: ").append(formatDuration(streamDurationSeconds))
+                info.append("\n")
+                    .append(activity.getString(R.string.perf_stream_duration, formatDuration(streamDurationSeconds)))
             }
         } else if (hasStreamData) {
             val batteryConsumed = streamStartBatteryLevel - batteryLevel
-            info.append("\n\n本次串流已消耗电量: ")
-                .append(if (batteryConsumed > 0) "${batteryConsumed}%" else "0%")
-                .append("\n串流时长: ")
-                .append(formatDuration(streamDurationSeconds))
+            info.append("\n\n")
+                .append(activity.getString(
+                    R.string.perf_battery_consumed,
+                    if (batteryConsumed > 0) "${batteryConsumed}%" else "0%"
+                ))
+                .append("\n")
+                .append(activity.getString(R.string.perf_stream_duration, formatDuration(streamDurationSeconds)))
 
             if (batteryConsumed > 0 && streamDurationSeconds > 0) {
                 val consumedPerMinute = batteryConsumed.toDouble() / (streamDurationSeconds / 60.0)
                 if (consumedPerMinute > 0) {
                     val remainingMinutes = (batteryLevel / consumedPerMinute).toLong()
-                    info.append("\n预计还可续航: ").append(formatDuration(remainingMinutes * 60))
+                    info.append("\n")
+                        .append(activity.getString(
+                            R.string.perf_battery_remaining_estimate,
+                            formatDuration(remainingMinutes * 60)
+                        ))
                 }
             }
         }
@@ -588,16 +596,20 @@ class PerformanceOverlayManager(
 
     private fun formatDuration(seconds: Long): String {
         if (seconds < 60) {
-            return "${seconds}秒"
+            return activity.getString(R.string.perf_duration_seconds, seconds)
         }
         val hours = seconds / 3600
         val minutes = (seconds % 3600) / 60
         val remainingSeconds = seconds % 60
 
         return when {
-            hours > 0 -> if (minutes > 0) "${hours}小时${minutes}分钟" else "${hours}小时"
-            remainingSeconds > 0 -> "${minutes}分${remainingSeconds}秒"
-            else -> "${minutes}分钟"
+            hours > 0 -> if (minutes > 0) {
+                activity.getString(R.string.perf_duration_hours_minutes, hours, minutes)
+            } else {
+                activity.getString(R.string.perf_duration_hours, hours)
+            }
+            remainingSeconds > 0 -> activity.getString(R.string.perf_duration_minutes_seconds, minutes, remainingSeconds)
+            else -> activity.getString(R.string.perf_duration_minutes, minutes)
         }
     }
 
@@ -978,15 +990,16 @@ class PerformanceOverlayManager(
     }
 
     private fun showMoonPhaseInfo() {
-        val moonPhaseInfo = MoonPhaseUtils.getCurrentMoonPhaseInfo()
+        val moonPhaseInfo = MoonPhaseUtils.getCurrentMoonPhaseInfo(activity)
         val moonPhase = MoonPhaseUtils.getCurrentMoonPhase()
         val phasePercentage = MoonPhaseUtils.getMoonPhasePercentage(moonPhase)
         val daysInCycle = MoonPhaseUtils.getDaysInMoonCycle(moonPhase)
 
-        val dateFormat = SimpleDateFormat("yyyy年MM月dd日 EEEE", Locale.getDefault())
+        val dateFormat = SimpleDateFormat(activity.getString(R.string.perf_moon_date_format), Locale.getDefault())
         val currentDate = dateFormat.format(Calendar.getInstance(TimeZone.getDefault()).time)
 
         val moonInfo = String.format(
+            Locale.getDefault(),
             activity.getString(R.string.perf_moon_phase_info),
             moonPhaseInfo.icon, moonPhaseInfo.name, phasePercentage, daysInCycle, currentDate, moonPhaseInfo.description
         )
@@ -998,9 +1011,10 @@ class PerformanceOverlayManager(
         AlertDialog.Builder(activity, R.style.AppDialogStyle)
             .setTitle(title)
             .setMessage(message)
-            .setPositiveButton("Ok", null)
+            .setPositiveButton(R.string.dialog_button_ok, null)
             .setCancelable(true)
             .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
     }
 
     private fun showResolutionInfo() {
@@ -1016,23 +1030,23 @@ class PerformanceOverlayManager(
         val hostHeight = (perfInfo.initialHeight * scaleFactor).toInt()
 
         val resolutionInfo = StringBuilder()
-        resolutionInfo.append("Client Resolution: ").append(perfInfo.initialWidth)
+        resolutionInfo.append(activity.getString(R.string.perf_client_resolution)).append(perfInfo.initialWidth)
             .append(" × ").append(perfInfo.initialHeight).append("\n")
-        resolutionInfo.append("Host Resolution: ").append(hostWidth)
+        resolutionInfo.append(activity.getString(R.string.perf_host_resolution)).append(hostWidth)
             .append(" × ").append(hostHeight).append("\n")
-        resolutionInfo.append("Scale Factor: ").append(String.format("%.2f", scaleFactor))
+        resolutionInfo.append(activity.getString(R.string.perf_scale_factor)).append(String.format(Locale.getDefault(), "%.2f", scaleFactor))
             .append(" (").append(scalePercent).append("%)\n")
 
         val deviceRefreshRate = UiHelper.getDeviceRefreshRate(activity)
-        resolutionInfo.append("Target FPS: ").append(prefConfig.fps).append(" FPS\n")
-        resolutionInfo.append("Current FPS: ").append(String.format("%.0f", perfInfo.totalFps)).append(" FPS\n")
-        resolutionInfo.append("Device Refresh Rate: ").append(String.format("%.0f", deviceRefreshRate)).append(" Hz\n")
+        resolutionInfo.append(activity.getString(R.string.perf_target_fps)).append(prefConfig.fps).append(" FPS\n")
+        resolutionInfo.append(activity.getString(R.string.perf_current_fps)).append(String.format(Locale.getDefault(), "%.0f", perfInfo.totalFps)).append(" FPS\n")
+        resolutionInfo.append(activity.getString(R.string.perf_device_refresh)).append(String.format(Locale.getDefault(), "%.0f", deviceRefreshRate)).append(" Hz\n")
 
         if (actualDisplayRefreshRate > 0) {
-            resolutionInfo.append("Actual Display Refresh Rate: ").append(String.format("%.2f", actualDisplayRefreshRate)).append(" Hz\n")
+            resolutionInfo.append(activity.getString(R.string.perf_actual_refresh)).append(String.format(Locale.getDefault(), "%.2f", actualDisplayRefreshRate)).append(" Hz\n")
         }
 
-        showInfoDialog("📱 Resolution Information", resolutionInfo.toString())
+        showInfoDialog(activity.getString(R.string.perf_resolution_title), resolutionInfo.toString())
     }
 
     private fun showDecoderInfo() {
@@ -1044,10 +1058,14 @@ class PerformanceOverlayManager(
         val decoderInfo = StringBuilder()
         val perfInfo = currentPerformanceInfo
         if (perfInfo != null) {
-            decoderInfo.append("Codec: ").append(perfInfo.decoder).append("\n\n")
+            decoderInfo.append(activity.getString(R.string.perf_codec_label)).append(perfInfo.decoder).append("\n\n")
             val decoderTypeInfo = getDecoderTypeInfo(perfInfo.decoder)
-            decoderInfo.append("Type: ").append(decoderTypeInfo.fullName).append("\n")
-            decoderInfo.append("HDR: ").append(if (perfInfo.isHdrActive) "Enabled" else "Disabled").append("\n")
+            decoderInfo.append(activity.getString(R.string.perf_type_label)).append(decoderTypeInfo.fullName).append("\n")
+            decoderInfo.append(activity.getString(R.string.perf_dynamic_range)).append(when (perfInfo.hdrFormat) {
+                com.limelight.binding.video.StreamHdrFormat.HDR10_PLUS -> activity.getString(R.string.hdr_diagnostic_hdr10_plus)
+                com.limelight.binding.video.StreamHdrFormat.DOLBY_VISION -> activity.getString(R.string.hdr_diagnostic_dolby)
+                else -> perfInfo.hdrFormat.displayName
+            }).append("\n")
         }
         decoderInfo.append(activity.getString(R.string.perf_decoder_info))
         return decoderInfo.toString()
@@ -1080,7 +1098,109 @@ class PerformanceOverlayManager(
     }
 
     private fun showFpsInfo() {
-        showPerformanceInfo(R.string.perf_fps_title, R.string.perf_fps_info)
+        AlertDialog.Builder(activity, R.style.AppDialogStyle)
+            .setTitle(R.string.perf_fps_title)
+            .setView(createFpsInfoContent())
+            .setPositiveButton(activity.getString(R.string.yes), null)
+            .setCancelable(true)
+            .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
+    }
+
+    private fun createFpsInfoContent(): View {
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20f), dp(8f), dp(20f), 0)
+
+            addView(createJitterMonitorCheckboxRow(), LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+
+            addView(createFpsInfoScrollView(), LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+    }
+
+    private fun createFpsInfoScrollView(): View {
+        return ScrollView(activity).apply {
+            addView(TextView(activity).apply {
+                text = activity.getString(R.string.perf_fps_info)
+                setTextColor(ContextCompat.getColor(activity, R.color.app_dialog_title_color))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setLineSpacing(0f, 1.08f)
+                setPadding(0, dp(14f), 0, 0)
+            })
+        }
+    }
+
+    private fun createJitterMonitorCheckboxRow(): View {
+        val jitterCheckbox = CheckBox(activity).apply {
+            isChecked = prefConfig.enableJitterMonitor
+            text = ""
+            minWidth = dp(48f)
+            minHeight = dp(48f)
+            buttonTintList = createJitterCheckboxTint()
+            setOnCheckedChangeListener { _, isChecked ->
+                setJitterMonitorEnabled(isChecked)
+            }
+        }
+
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            minimumHeight = dp(58f)
+            setPadding(0, dp(4f), 0, dp(6f))
+            setOnClickListener { jitterCheckbox.isChecked = !jitterCheckbox.isChecked }
+
+            addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(activity).apply {
+                    text = activity.getString(R.string.title_enable_jitter_monitor)
+                    setTextColor(ContextCompat.getColor(activity, R.color.app_dialog_title_color))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    includeFontPadding = false
+                })
+                addView(TextView(activity).apply {
+                    text = activity.getString(R.string.summary_enable_jitter_monitor)
+                    setTextColor(ContextCompat.getColor(activity, R.color.app_dialog_subtitle_color))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setLineSpacing(0f, 1.05f)
+                    setPadding(0, dp(4f), dp(12f), 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+            addView(jitterCheckbox, LinearLayout.LayoutParams(dp(56f), dp(48f)))
+        }
+    }
+
+    private fun createJitterCheckboxTint(): ColorStateList {
+        val checkedState = intArrayOf(android.R.attr.state_checked)
+        val defaultState = intArrayOf()
+        val states = arrayOf(checkedState, defaultState)
+        val accent = UiHelper.accentColor(activity)
+        val secondary = ContextCompat.getColor(activity, R.color.app_dialog_subtitle_color)
+
+        return ColorStateList(
+            states,
+            intArrayOf(accent, colorWithAlpha(secondary, 180))
+        )
+    }
+
+    private fun colorWithAlpha(color: Int, alpha: Int): Int {
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    private fun setJitterMonitorEnabled(enabled: Boolean) {
+        if (prefConfig.enableJitterMonitor == enabled) return
+        prefConfig.enableJitterMonitor = enabled
+        prefConfig.writePreferences(activity)
+        onJitterMonitorChanged(enabled)
     }
 
     private fun showPacketLossInfo() {
@@ -1110,6 +1230,7 @@ class PerformanceOverlayManager(
             .setPositiveButton(activity.getString(R.string.yes), null)
             .setCancelable(true)
             .show()
+            .also { AppDialogStyler.installDismissKeys(it) }
     }
 
     private fun toggleLayoutOrientation() {
@@ -1244,6 +1365,12 @@ class PerformanceOverlayManager(
         val parent = view.parent as View
         return intArrayOf(parent.width, parent.height)
     }
+
+    private fun dp(value: Float): Int = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP,
+        value,
+        activity.resources.displayMetrics
+    ).toInt()
 
     companion object {
         private const val CLICK_THRESHOLD = 10

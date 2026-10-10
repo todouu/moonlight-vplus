@@ -37,6 +37,7 @@ import com.limelight.nvstream.http.NvHTTP
 import com.limelight.nvstream.http.PairingManager
 import com.limelight.nvstream.input.MouseButtonPacket
 import com.limelight.nvstream.jni.MoonBridge
+import com.limelight.utils.HdrCapabilityHelper
 
 open class NvConnection(
     private val appContext: Context,
@@ -60,6 +61,10 @@ open class NvConnection(
     private val context: ConnectionContext = ConnectionContext()
     private val isMonkey: Boolean = ActivityManager.isUserAMonkey()
 
+    @Volatile
+    var serverVersion: String? = null
+        private set
+
     init {
         context.serverAddress = host
         context.httpsPort = httpsPort
@@ -71,10 +76,23 @@ open class NvConnection(
         context.riKey = generateRiAesKey()
         context.riKeyId = generateRiKeyId()
 
-        val brightnessRange = com.limelight.utils.HdrCapabilityHelper.getBrightnessRangeAsInts(appContext)
+        val brightnessRange = HdrCapabilityHelper.getBrightnessRangeAsInts(appContext).let {
+            if (config.hdrBrightnessOverride) {
+                HdrCapabilityHelper.applyBrightnessOverride(it, config.hdrPeakBrightnessNits)
+            } else {
+                it
+            }
+        }
         context.minBrightness = brightnessRange[0]
         context.maxBrightness = brightnessRange[1]
         context.maxAverageBrightness = brightnessRange[2]
+
+        if (config.hdrBrightnessOverride) {
+            LimeLog.info(
+                "HDR brightness override: min=${context.minBrightness}, " +
+                    "max=${context.maxBrightness}, avg=${context.maxAverageBrightness} nits"
+            )
+        }
     }
 
     fun stop() {
@@ -211,13 +229,16 @@ open class NvConnection(
         context.serverAppVersion = h.getServerVersion(serverInfo)
 
         val details = h.getComputerDetails(serverInfo)
+        details.serverCert = context.serverCert
+        serverVersion = details.sunshineVersion ?: context.serverAppVersion
         context.isNvidiaServerSoftware = details.nvidiaServer
         context.supportsDesktopSpecialApp = details.supportsDesktopSpecialApp
 
         context.serverGfeVersion = h.getGfeVersion(serverInfo)
 
-        if (h.getPairState(serverInfo) != PairingManager.PairState.PAIRED) {
-            connListener.displayMessage("Device not paired with computer")
+        if (details.pairState != PairingManager.PairState.PAIRED) {
+            LimeLog.warning("Rejecting NOT_PAIRED serverinfo while starting stream; trusted=${details.serverInfoTrustedByCert}")
+            connListener.displayMessage(appContext.getString(R.string.connection_not_paired))
             return false
         }
 
@@ -225,22 +246,22 @@ open class NvConnection(
 
         context.negotiatedHdr = (streamConfig.supportedVideoFormats and MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0
         if ((context.serverCodecModeSupport and 0x20200) == 0 && context.negotiatedHdr) {
-            connListener.displayTransientMessage("Your PC GPU does not support streaming HDR. The stream will be SDR.")
+            connListener.displayTransientMessage(appContext.getString(R.string.connection_hdr_unsupported))
             context.negotiatedHdr = false
         }
 
         if ((streamConfig.reqWidth > 4096 || streamConfig.reqHeight > 4096) &&
             (h.getServerCodecModeSupport(serverInfo) and 0x200) == 0L && context.isNvidiaServerSoftware
         ) {
-            connListener.displayMessage("Your host PC does not support streaming at resolutions above 4K.")
+            connListener.displayMessage(appContext.getString(R.string.connection_above_4k_host))
             return false
         } else if ((streamConfig.reqWidth > 4096 || streamConfig.reqHeight > 4096) &&
             (streamConfig.supportedVideoFormats and MoonBridge.VIDEO_FORMAT_MASK_H264.inv()) == 0
         ) {
-            connListener.displayMessage("Your streaming device must support HEVC or AV1 to stream at resolutions above 4K.")
+            connListener.displayMessage(appContext.getString(R.string.connection_above_4k_client))
             return false
         } else if (streamConfig.reqHeight >= 2160 && !h.supports4K(serverInfo)) {
-            connListener.displayTransientMessage("You must update GeForce Experience to stream in 4K. The stream will be 1080p.")
+            connListener.displayTransientMessage(appContext.getString(R.string.connection_4k_update))
             context.negotiatedWidth = 1920
             context.negotiatedHeight = 1080
         } else {
@@ -265,7 +286,7 @@ open class NvConnection(
         if (!streamConfig.app.isInitialized()) {
             LimeLog.info("Using deprecated app lookup method - Please specify an app ID in your StreamConfiguration instead")
             app = h.getAppByName(streamConfig.app.appName) ?: run {
-                connListener.displayMessage("The app ${streamConfig.app.appName} is not in GFE app list")
+                connListener.displayMessage(appContext.getString(R.string.connection_app_missing, streamConfig.app.appName))
                 return false
             }
         }
@@ -298,23 +319,20 @@ open class NvConnection(
 
         try {
             if (!h.launchApp(context, "resume", appId, context.negotiatedHdr)) {
-                connListener.displayMessage("Failed to resume existing session")
+                connListener.displayMessage(appContext.getString(R.string.connection_resume_failed))
                 return false
             }
         } catch (e: HostHttpResponseException) {
             when (e.getErrorCode()) {
                 470 -> {
                     connListener.displayMessage(
-                        "This session wasn't started by this device," +
-                                " so it cannot be resumed. End streaming on the original " +
-                                "device or the PC itself and try again. (Error code: ${e.getErrorCode()})"
+                        appContext.getString(R.string.connection_foreign_session_resumed, e.getErrorCode())
                     )
                     return false
                 }
                 525 -> {
                     connListener.displayMessage(
-                        "The application is minimized. Resume it on the PC manually or " +
-                                "quit the session and start streaming again."
+                        appContext.getString(R.string.connection_app_minimized)
                     )
                     return false
                 }
@@ -336,15 +354,13 @@ open class NvConnection(
 
         try {
             if (!h.quitApp()) {
-                connListener.displayMessage("Failed to quit previous session! You must quit it manually")
+                connListener.displayMessage(appContext.getString(R.string.connection_quit_failed))
                 return false
             }
         } catch (e: HostHttpResponseException) {
             if (e.getErrorCode() == 599) {
                 connListener.displayMessage(
-                    "This session wasn't started by this device," +
-                            " so it cannot be quit. End streaming on the original " +
-                            "device or the PC itself. (Error code: ${e.getErrorCode()})"
+                    appContext.getString(R.string.connection_foreign_session_quit, e.getErrorCode())
                 )
                 return false
             } else {
@@ -362,7 +378,7 @@ open class NvConnection(
         }
 
         if (!h.launchApp(context, "launch", context.streamConfig.app.appId, context.negotiatedHdr)) {
-            context.connListener.displayMessage("Failed to launch application")
+            context.connListener.displayMessage(appContext.getString(R.string.connection_launch_failed))
             return false
         }
 
@@ -396,7 +412,14 @@ open class NvConnection(
                 context.connListener.stageComplete(appName)
             } catch (e: HostHttpResponseException) {
                 e.printStackTrace()
-                context.connListener.displayMessage(e.message)
+                val hostMessage = when (e.getSunshineErrorCode()) {
+                    "VDD_NOT_SUPPORTED" ->
+                        appContext.getString(R.string.error_vdd_unsupported)
+                    "VDD_DRIVER_MISSING", "VDD_DRIVER_UNREACHABLE" ->
+                        appContext.getString(R.string.error_vdd_unavailable)
+                    else -> e.message
+                }
+                context.connListener.displayMessage(hostMessage)
                 context.connListener.stageFailed(appName, 0, e.getErrorCode())
                 return@Thread
             } catch (e: XmlPullParserException) {
@@ -410,7 +433,7 @@ open class NvConnection(
                 context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 or MoonBridge.ML_PORT_FLAG_TCP_47989, 0)
                 return@Thread
             } catch (e: InterruptedException) {
-                context.connListener.displayMessage("Connection interrupted")
+                context.connListener.displayMessage(appContext.getString(R.string.connection_interrupted))
                 context.connListener.stageFailed(appName, 0, 0)
                 return@Thread
             }
@@ -433,6 +456,11 @@ open class NvConnection(
 
             synchronized(MoonBridge::class.java) {
                 MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener)
+                MoonBridge.setDynamicHdrNegotiation(
+                    context.streamConfig.dynamicHdrCaps,
+                    if (context.streamConfig.dolbyVisionDirectSurface) 1 else 0,
+                    context.streamConfig.dynamicHdrPreference,
+                )
                 val ret = timeConnectionStep("native connection") {
                     MoonBridge.startConnection(
                         context.serverAddress.address,
@@ -452,7 +480,8 @@ open class NvConnection(
                         context.streamConfig.getEnableMic(),
                         context.streamConfig.getControlOnly(),
                         context.streamConfig.audioCodec,
-                        context.streamConfig.audioBitrate
+                        context.streamConfig.audioBitrate,
+                        context.streamConfig.authoredPcmHaptics
                     )
                 }
                 if (ret != 0) {
@@ -548,6 +577,38 @@ open class NvConnection(
         }
     }
 
+    fun sendTouchpadEvent(
+        eventType: Byte, pointerId: Int, x: Float, y: Float, pressure: Float,
+        contactAreaMajor: Float, contactAreaMinor: Float, rotation: Short,
+        deviceWidthMm: Short, deviceHeightMm: Short, buttonState: Byte
+    ): Int {
+        return if (!isMonkey) {
+            MoonBridge.sendTouchpadEvent(
+                eventType, pointerId, x, y, pressure,
+                contactAreaMajor, contactAreaMinor, rotation,
+                deviceWidthMm, deviceHeightMm, buttonState
+            )
+        } else {
+            MoonBridge.LI_ERR_UNSUPPORTED
+        }
+    }
+
+    fun sendTouchpadFrameEvent(
+        contactCount: Byte, eventTypes: ByteArray, pointerIds: IntArray,
+        x: FloatArray, y: FloatArray, pressure: FloatArray, rotation: Short,
+        deviceWidthMm: Short, deviceHeightMm: Short, buttonState: Byte
+    ): Int {
+        return if (!isMonkey) {
+            MoonBridge.sendTouchpadFrameEvent(
+                contactCount, eventTypes, pointerIds,
+                x, y, pressure, rotation,
+                deviceWidthMm, deviceHeightMm, buttonState
+            )
+        } else {
+            MoonBridge.LI_ERR_UNSUPPORTED
+        }
+    }
+
     fun sendPenEvent(
         eventType: Byte, toolType: Byte, penButtons: Byte, x: Float, y: Float,
         pressureOrDistance: Float, contactAreaMajor: Float, contactAreaMinor: Float,
@@ -589,9 +650,8 @@ open class NvConnection(
         }
     }
 
-    fun sendControllerBatteryEvent(controllerNumber: Byte, batteryState: Byte, batteryPercentage: Byte) {
+    fun sendControllerBatteryEvent(controllerNumber: Byte, batteryState: Byte, batteryPercentage: Byte): Int =
         MoonBridge.sendControllerBatteryEvent(controllerNumber, batteryState, batteryPercentage)
-    }
 
     fun sendUtf8Text(text: String) {
         if (!isMonkey) {
@@ -651,7 +711,7 @@ open class NvConnection(
                 LimeLog.info("NvHTTP created successfully for bitrate adjustment")
             } catch (e: IOException) {
                 LimeLog.warning("Failed to create NvHTTP for bitrate adjustment: ${e.message}")
-                callback?.onFailure("Failed to create HTTP connection: ${e.message}")
+                callback?.onFailure(appContext.getString(R.string.connection_http_failed, e.message.orEmpty()))
                 return@Thread
             }
             try {
@@ -663,20 +723,20 @@ open class NvConnection(
                     callback?.onSuccess(bitrateKbps)
                 } else {
                     LimeLog.warning("Bitrate adjustment request failed (server returned false)")
-                    callback?.onFailure("Server returned failure response")
+                    callback?.onFailure(appContext.getString(R.string.connection_server_failed))
                 }
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
                 LimeLog.warning("Bitrate adjustment interrupted: ${e.message}")
-                callback?.onFailure("Operation interrupted")
+                callback?.onFailure(appContext.getString(R.string.connection_operation_interrupted))
             } catch (e: IOException) {
                 LimeLog.warning("Failed to set bitrate: ${e.message}")
                 e.printStackTrace()
-                callback?.onFailure("Network error: ${e.message}")
+                callback?.onFailure(appContext.getString(R.string.connection_network_error, e.message.orEmpty()))
             } catch (e: XmlPullParserException) {
                 LimeLog.warning("Failed to set bitrate: ${e.message}")
                 e.printStackTrace()
-                callback?.onFailure("Network error: ${e.message}")
+                callback?.onFailure(appContext.getString(R.string.connection_network_error, e.message.orEmpty()))
             }
         }.start()
     }
@@ -698,7 +758,7 @@ open class NvConnection(
                 h = NvHTTP(context.serverAddress, context.httpsPort, uniqueId, clientName, context.serverCert, cryptoProvider)
             } catch (e: IOException) {
                 LimeLog.warning("Failed to create NvHTTP for display rotation: ${e.message}")
-                callback?.onFailure("Failed to create HTTP connection: ${e.message}")
+                callback?.onFailure(appContext.getString(R.string.connection_http_failed, e.message.orEmpty()))
                 return@Thread
             }
 
@@ -711,18 +771,18 @@ open class NvConnection(
                     callback?.onSuccess(angle)
                 } else {
                     LimeLog.warning("Display rotation request failed (server returned false)")
-                    callback?.onFailure("Server returned failure response")
+                    callback?.onFailure(appContext.getString(R.string.connection_server_failed))
                 }
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
                 LimeLog.warning("Display rotation interrupted: ${e.message}")
-                callback?.onFailure("Operation interrupted")
+                callback?.onFailure(appContext.getString(R.string.connection_operation_interrupted))
             } catch (e: FileNotFoundException) {
                 LimeLog.warning("Display rotation not supported by server (404): ${e.message}")
-                callback?.onFailure("服务端不支持显示旋转功能，请更新服务端版本")
+                callback?.onFailure(appContext.getString(R.string.connection_rotation_unsupported))
             } catch (e: IOException) {
                 LimeLog.warning("Failed to rotate display: ${e.message}")
-                callback?.onFailure("网络错误: ${e.message}")
+                callback?.onFailure(appContext.getString(R.string.connection_network_error, e.message.orEmpty()))
             }
         }.start()
     }

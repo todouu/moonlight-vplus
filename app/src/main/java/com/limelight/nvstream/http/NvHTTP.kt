@@ -10,7 +10,6 @@ import java.io.StringReader
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.Proxy
-import java.net.URLEncoder
 import java.security.KeyManagementException
 import java.security.KeyStore
 import java.security.NoSuchAlgorithmException
@@ -19,9 +18,12 @@ import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.LinkedList
+import java.util.Locale
 import java.util.Stack
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 
 import org.json.JSONObject
 
@@ -74,12 +76,15 @@ class NvHTTP(
     private lateinit var httpClientLongConnectTimeout: OkHttpClient
     private lateinit var httpClientLongConnectNoReadTimeout: OkHttpClient
     private lateinit var httpClientShortConnectTimeout: OkHttpClient
+    private val activeNetworkProbeCall = AtomicReference<okhttp3.Call?>()
 
     private lateinit var defaultTrustManager: X509TrustManager
     private lateinit var trustManager: X509TrustManager
     private lateinit var keyManager: X509KeyManager
     internal var serverCert: X509Certificate? = null
     private var lastServerInfoTrustedByCert = false
+    internal var lastPairStateTrusted = false
+        private set
 
     data class TimeoutConfig(
         val connectTimeoutMs: Int,
@@ -101,11 +106,64 @@ class NvHTTP(
         }
     }
 
+    data class NetworkProbeCapabilities(
+        val endpoint: String,
+        val minBytes: Long,
+        val maxBytes: Long
+    )
+
+    data class NetworkProbeMeasurement(
+        val bandwidthMbps: Double,
+        val responseLatencyMs: Double,
+        val responseJitterMs: Double,
+        val receivedBytes: Long
+    )
+
+    class NetworkProbeException(
+        val reason: String,
+        val retryAfterMs: Long = 0,
+        cause: Throwable? = null
+    ) : IOException(reason, cause)
+
     class DisplayInfo(
         val index: Int,
         val name: String,
         val guid: String
     )
+
+    enum class VddState {
+        READY,
+        DRIVER_MISSING,
+        DRIVER_UNREACHABLE,
+        UNSUPPORTED_PLATFORM,
+        UNKNOWN;
+
+        companion object {
+            fun fromWireValue(value: String?): VddState = when (value) {
+                "ready" -> READY
+                "driver_missing" -> DRIVER_MISSING
+                "driver_unreachable" -> DRIVER_UNREACHABLE
+                "unsupported_platform" -> UNSUPPORTED_PLATFORM
+                else -> UNKNOWN
+            }
+        }
+    }
+
+    data class DisplayCatalog(
+        val displays: List<DisplayInfo>,
+        val vddCapabilityVersion: Int?,
+        val vddState: VddState
+    ) {
+        fun supportsVdd(serverInfoCapabilityVersion: Int?): Boolean {
+            val advertisedVersions = listOfNotNull(
+                serverInfoCapabilityVersion,
+                vddCapabilityVersion
+            )
+            // Legacy hosts do not advertise this field. Only reject VDD when every
+            // capability source that is present explicitly reports no support.
+            return advertisedVersions.isEmpty() || advertisedVersions.any { it > 0 }
+        }
+    }
 
     init {
 
@@ -156,28 +214,27 @@ class NvHTTP(
                 throw IllegalStateException("Should never be called")
             }
             override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {
-                try {
-                    defaultTrustManager.checkServerTrusted(certs, authType)
-                } catch (e: CertificateException) {
-                    if (certs.size == 1 && this@NvHTTP.serverCert != null) {
-                        if (certs[0] != this@NvHTTP.serverCert) {
-                            throw CertificateException("Certificate mismatch")
-                        }
-                    } else {
-                        throw e
+                val pinnedCert = this@NvHTTP.serverCert
+                if (pinnedCert != null) {
+                    if (certs.firstOrNull() != pinnedCert) {
+                        throw CertificateException("Certificate mismatch")
                     }
+                    return
                 }
+
+                defaultTrustManager.checkServerTrusted(certs, authType)
             }
         }
 
         val hv = HostnameVerifier { hostname, session ->
+            val pinnedCert = this@NvHTTP.serverCert
             try {
                 val certificates = session.peerCertificates
-                if (certificates.size == 1 && certificates[0] == this@NvHTTP.serverCert) {
-                    return@HostnameVerifier true
+                if (pinnedCert != null) {
+                    return@HostnameVerifier certificates.firstOrNull() == pinnedCert
                 }
             } catch (e: SSLPeerUnverifiedException) {
-                e.printStackTrace()
+                return@HostnameVerifier false
             }
             HttpsURLConnection.getDefaultHostnameVerifier().verify(hostname, session)
         }
@@ -224,7 +281,17 @@ class NvHTTP(
     }
 
     private fun shouldRetryTlsHandshake(e: SSLHandshakeException): Boolean {
-        return e.cause !is CertificateException
+        val pending = ArrayDeque<Throwable>()
+        val visited = HashSet<Throwable>()
+        pending.add(e)
+        while (pending.isNotEmpty()) {
+            val current = pending.removeFirst()
+            if (!visited.add(current)) continue
+            if (current is CertificateException) return false
+            current.cause?.let(pending::addLast)
+            current.suppressed.forEach(pending::addLast)
+        }
+        return true
     }
 
     @Throws(IOException::class, InterruptedException::class)
@@ -241,28 +308,64 @@ class NvHTTP(
     }
 
     @Throws(IOException::class, XmlPullParserException::class, InterruptedException::class)
+    fun getUsbForwardingCapability(): UsbForwardingCapability {
+        val deadline = HttpRequestDeadline(5, TimeUnit.SECONDS)
+        val pinned = checkNotNull(serverCert) { "USB forwarding requires a paired host" }
+        // This credential request must not inherit legacy route encoding,
+        // redirects, CA-only trust, response logging, or an unbounded retry.
+        val client = httpClientShortConnectTimeout.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .callTimeout(5, TimeUnit.SECONDS)
+            .hostnameVerifier { _, session -> session.peerCertificates.firstOrNull() == pinned }
+            .build()
+        if (httpsPort == 0) {
+            val discoveryUrl = getCompleteUrl(baseUrlHttp, "serverinfo", null)
+            httpsPort = deadline.execute(client.newCall(Request.Builder().url(discoveryUrl).get().build())).use { response ->
+                if (!response.isSuccessful) throw HostHttpResponseException(response.code, "HTTPS port discovery failed")
+                val discoveryBody = response.peekBody(65537)
+                require(discoveryBody.contentLength() <= 65536) { "HTTPS port discovery response too large" }
+                getHttpsPort(discoveryBody.string())
+            }
+        }
+        val url = HttpUrl.Builder().scheme("https").host(baseUrlHttp.host).port(httpsPort)
+            .addPathSegments("api/v1/usb-forwarding").build()
+        return deadline.execute(client.newCall(Request.Builder().url(url).get().build())).use { response ->
+            if (response.code == 404) throw FileNotFoundException("USB capability endpoint unavailable")
+            if (response.code != 200) throw HostHttpResponseException(response.code, "USB capability request failed")
+            val buffer = ByteArray(4097)
+            val input = response.body.byteStream()
+            var size = 0
+            while (size < buffer.size) {
+                val count = input.read(buffer, size, buffer.size - size)
+                if (count < 0) break
+                size += count
+            }
+            require(size <= 4096) { "USB capability response too large" }
+            UsbForwardingCapability.parse(String(buffer, 0, size, Charsets.UTF_8))
+        }
+    }
+
+    @Throws(IOException::class, XmlPullParserException::class, InterruptedException::class)
     fun getServerInfo(likelyOnline: Boolean): String {
         val client = if (likelyOnline) httpClientLongConnectTimeout else httpClientShortConnectTimeout
         lastServerInfoTrustedByCert = false
+        lastPairStateTrusted = false
 
         if (serverCert != null) {
+            val httpsUrl = getHttpsUrl(likelyOnline)
             try {
-                val resp: String
-                try {
-                    resp = openHttpConnectionToString(client, getHttpsUrl(likelyOnline), "serverinfo")
-                } catch (e: SSLHandshakeException) {
-                    if (e.cause is CertificateException) {
-                        throw HostHttpResponseException(401, "Server certificate mismatch")
-                    } else {
-                        throw e
-                    }
-                }
+                val resp = openHttpConnectionToString(client, httpsUrl, "serverinfo")
                 getServerVersion(resp)
                 lastServerInfoTrustedByCert = true
+                lastPairStateTrusted = true
                 return resp
             } catch (e: HostHttpResponseException) {
                 if (e.getErrorCode() == 401) {
-                    return openHttpConnectionToString(client, baseUrlHttp, "serverinfo")
+                    // The pinned HTTPS response authenticates NOT_PAIRED; HTTP only supplies details.
+                    val resp = openHttpConnectionToString(client, baseUrlHttp, "serverinfo")
+                    lastPairStateTrusted = true
+                    return resp
                 }
                 throw e
             }
@@ -291,12 +394,20 @@ class NvHTTP(
         details.externalPort = getExternalPort(serverInfo)
         details.remoteAddress = makeTuple(getXmlString(serverInfo, "ExternalIP", false), details.externalPort)
 
-        details.pairState = getPairState(serverInfo)
+        details.pairState = PairStateTrust.resolvePairState(
+            getPairState(serverInfo),
+            lastServerInfoTrustedByCert,
+            lastPairStateTrusted
+        )
         details.serverInfoTrustedByCert = lastServerInfoTrustedByCert
+        details.pairStateTrusted = lastPairStateTrusted
         details.runningGameId = getCurrentGame(serverInfo)
 
         details.nvidiaServer = getXmlString(serverInfo, "state", true)!!.contains("MJOLNIR")
         details.supportsDesktopSpecialApp = getXmlString(serverInfo, "DesktopSpecialAppSupport", false) == "1"
+        details.vddCapabilityVersion = parseVddCapabilityVersion(
+            getXmlString(serverInfo, "VddCapabilityVersion", false)
+        )
 
         try {
             details.sunshineVersion = getSunshineVersion(serverInfo)
@@ -326,10 +437,15 @@ class NvHTTP(
         }
     }
 
-    private fun getCompleteUrl(baseUrl: HttpUrl, path: String, query: String?): HttpUrl {
+    private fun getCompleteUrl(baseUrl: HttpUrl, path: String, query: String?, displayName: String? = null): HttpUrl {
         return baseUrl.newBuilder()
             .addPathSegment(path)
             .query(query)
+            .apply {
+                displayName?.takeIf { it.isNotEmpty() }?.let {
+                    addQueryParameter("display_name", it)
+                }
+            }
             .addQueryParameter("uniqueid", uniqueId)
             .addQueryParameter("clientname", clientName)
             .addQueryParameter("uuid", UUID.randomUUID().toString())
@@ -342,8 +458,8 @@ class NvHTTP(
     }
 
     @Throws(IOException::class, InterruptedException::class)
-    private fun openHttpConnection(client: OkHttpClient, baseUrl: HttpUrl, path: String, query: String?): ResponseBody {
-        val completeUrl = getCompleteUrl(baseUrl, path, query)
+    private fun openHttpConnection(client: OkHttpClient, baseUrl: HttpUrl, path: String, query: String?, displayName: String? = null): ResponseBody {
+        val completeUrl = getCompleteUrl(baseUrl, path, query, displayName)
         val request = Request.Builder().url(completeUrl).get().build()
         val response = try {
             client.newCall(request).execute()
@@ -377,20 +493,20 @@ class NvHTTP(
     }
 
     @Throws(IOException::class, InterruptedException::class)
-    private fun openHttpConnectionToString(client: OkHttpClient, baseUrl: HttpUrl, path: String, query: String?): String {
+    private fun openHttpConnectionToString(client: OkHttpClient, baseUrl: HttpUrl, path: String, query: String?, displayName: String? = null): String {
         try {
-            val resp = openHttpConnection(client, baseUrl, path, query)
+            val resp = openHttpConnection(client, baseUrl, path, query, displayName)
             val respString = resp.string()
             resp.close()
 
             if (verbose && path != "serverinfo") {
-                LimeLog.info("${getCompleteUrl(baseUrl, path, query)} -> $respString")
+                LimeLog.info("${getCompleteUrl(baseUrl, path, query, displayName)} -> $respString")
             }
 
             return respString
         } catch (e: IOException) {
             if (verbose && path != "serverinfo") {
-                LimeLog.warning("${getCompleteUrl(baseUrl, path, query)} -> ${e.message}")
+                LimeLog.warning("${getCompleteUrl(baseUrl, path, query, displayName)} -> ${e.message}")
                 e.printStackTrace()
             }
             throw e
@@ -441,7 +557,12 @@ class NvHTTP(
 
     @Throws(IOException::class, XmlPullParserException::class, InterruptedException::class)
     fun getPairState(): PairState {
-        return getPairState(getServerInfo(true))
+        val serverInfo = getServerInfo(true)
+        return PairStateTrust.resolvePairState(
+            getPairState(serverInfo),
+            lastServerInfoTrustedByCert,
+            lastPairStateTrusted
+        )
     }
 
     @Throws(IOException::class, XmlPullParserException::class)
@@ -586,33 +707,10 @@ class NvHTTP(
     }
 
     @Throws(IOException::class, InterruptedException::class)
-    fun getDisplays(): List<DisplayInfo> {
+    fun getDisplays(): DisplayCatalog {
         try {
             val jsonStr = openHttpConnectionToString(httpClientLongConnectTimeout, getHttpsUrl(true), "displays")
-            val json = JSONObject(jsonStr)
-
-            val statusCode = json.optInt("status_code", 0)
-            if (statusCode != 200) {
-                throw IOException("Failed to get displays: " + json.optString("status_message", "Unknown error"))
-            }
-
-            val displaysArray = json.optJSONArray("displays") ?: return ArrayList()
-
-            val displays = ArrayList<DisplayInfo>(displaysArray.length())
-            for (i in 0 until displaysArray.length()) {
-                val displayObj = displaysArray.getJSONObject(i)
-
-                var friendlyName = displayObj.optString("friendly_name", "")
-                if (friendlyName.isEmpty()) {
-                    friendlyName = displayObj.optString("display_name", "Display ${i + 1}")
-                }
-
-                val guid = displayObj.optString("device_id", "")
-
-                displays.add(DisplayInfo(i, friendlyName, guid))
-            }
-
-            return displays
+            return parseDisplayCatalog(jsonStr)
         } catch (e: org.json.JSONException) {
             throw IOException("Failed to parse displays response: ${e.message}", e)
         }
@@ -621,13 +719,13 @@ class NvHTTP(
     @Throws(IOException::class, InterruptedException::class)
     fun rotateDisplay(angle: Int, displayName: String?): Boolean {
         try {
-            val query = StringBuilder()
-            query.append("angle=").append(angle)
-            if (!displayName.isNullOrEmpty()) {
-                query.append("&display_name=").append(java.net.URLEncoder.encode(displayName, "UTF-8"))
-            }
-
-            val jsonStr = openHttpConnectionToString(httpClientLongConnectTimeout, getHttpsUrl(true), "rotate-display", query.toString())
+            val jsonStr = openHttpConnectionToString(
+                httpClientLongConnectTimeout,
+                getHttpsUrl(true),
+                "rotate-display",
+                "angle=$angle",
+                displayName
+            )
             val json = JSONObject(jsonStr)
 
             val statusCode = json.optInt("status_code", 0)
@@ -695,28 +793,36 @@ class NvHTTP(
             "&remoteControllersBitmap=${streamConfig.attachedGamepadMask}" +
             "&gcmap=${streamConfig.attachedGamepadMask}" +
             "&gcpersist=${if (streamConfig.getPersistGamepadsAfterDisconnect()) 1 else 0}" +
-            "&useVdd=${if (streamConfig.getUseVdd()) 1 else 0}" +
             "&minBrightness=${context.minBrightness}" +
             "&maxBrightness=${context.maxBrightness}" +
             "&maxAverageBrightness=${context.maxAverageBrightness}"
+
+        streamConfig.getUseVdd()?.let { useVdd ->
+            queryParams += "&useVdd=${if (useVdd) 1 else 0}"
+        }
+        // Sunshine extension: touch-keyboard auto-invoke intent. Explicitly
+        // sending 0 lets the client override a host-side per-client opt-in.
+        streamConfig.getTouchKeyboard()?.let { touchKeyboard ->
+            queryParams += "&touchKeyboard=${if (touchKeyboard) 1 else 0}"
+        }
 
         val customScreenMode = streamConfig.customScreenMode
         if (customScreenMode != -1) {
             queryParams += "&customScreenMode=$customScreenMode"
         }
 
-        val customVddScreenMode = streamConfig.customVddScreenMode
-        if (customVddScreenMode != -1) {
-            queryParams += "&customVddScreenMode=$customVddScreenMode"
+        if (!context.isNvidiaServerSoftware) {
+            streamConfig.hostGamepad?.let { queryParams += "&gamepad=$it" }
         }
-
-        context.displayName?.takeIf { it.isNotEmpty() }?.let { displayName ->
-            queryParams += "&display_name=${URLEncoder.encode(displayName, "UTF-8")}"
-        }
-
         queryParams += MoonBridge.getLaunchUrlQueryParameters()
 
-        val xmlStr = openHttpConnectionToString(httpClientLongConnectNoReadTimeout, getHttpsUrl(true), verb, queryParams)
+        val xmlStr = openHttpConnectionToString(
+            httpClientLongConnectNoReadTimeout,
+            getHttpsUrl(true),
+            verb,
+            queryParams,
+            context.displayName
+        )
         return if ((verb == "launch" && getXmlString(xmlStr, "gamesession", true) != "0") ||
             (verb == "resume" && getXmlString(xmlStr, "resume", true) != "0")
         ) {
@@ -804,6 +910,140 @@ class NvHTTP(
         } catch (e: Exception) {
             AbrCapabilities(false, 0, emptyList())
         }
+    }
+
+    /**
+     * Runs Foundation Sunshine's paired-client startup bandwidth probe.
+     * The probe is deliberately unavailable while a video session is active.
+     */
+    @Throws(IOException::class, InterruptedException::class)
+    fun runNetworkProbe(progress: ((receivedBytes: Long, totalBytes: Long) -> Unit)? = null): NetworkProbeMeasurement {
+        val probeClient = httpClientLongConnectTimeout.newBuilder()
+            .connectionPool(ConnectionPool(1, 5, TimeUnit.SECONDS))
+            .readTimeout(5, TimeUnit.SECONDS)
+            .build()
+
+        val capabilityUrl = getHttpsUrl(true).newBuilder()
+            .addPathSegments("api/network/capabilities")
+            .build()
+
+        val latencySamples = ArrayList<Double>(4)
+        var capabilities: NetworkProbeCapabilities? = null
+        repeat(4) {
+            val startedAt = System.nanoTime()
+            val call = probeClient.newCall(Request.Builder().url(capabilityUrl).get().build())
+            activeNetworkProbeCall.set(call)
+            try {
+                call.execute().use {
+                    val body = it.body.string()
+                    if (!it.isSuccessful) {
+                        throw parseNetworkProbeError(it.code, body)
+                    }
+                    if (capabilities == null) {
+                        capabilities = parseNetworkProbeCapabilities(body)
+                    }
+                }
+            } finally {
+                activeNetworkProbeCall.compareAndSet(call, null)
+            }
+            latencySamples += (System.nanoTime() - startedAt) / 1_000_000.0
+        }
+
+        val caps = capabilities ?: throw NetworkProbeException("invalid_capabilities")
+        if (caps.minBytes > MAX_NETWORK_PROBE_BYTES) {
+            throw NetworkProbeException("invalid_capabilities")
+        }
+        val sampleBytes = caps.maxBytes.coerceAtMost(MAX_NETWORK_PROBE_BYTES)
+        val nonce = UUID.randomUUID().toString()
+        val endpoint = caps.endpoint.trimStart('/')
+        val probeUrl = getHttpsUrl(true).newBuilder()
+            .addPathSegments(endpoint)
+            .addQueryParameter("bytes", sampleBytes.toString())
+            .addQueryParameter("nonce", nonce)
+            .build()
+
+        val call = probeClient.newCall(Request.Builder().url(probeUrl).get().build())
+        var receivedBytes = 0L
+        var bodyDurationSeconds = 0.0
+        activeNetworkProbeCall.set(call)
+        try {
+            call.execute().use {
+                if (!it.isSuccessful) {
+                    throw parseNetworkProbeError(it.code, it.body.string())
+                }
+                if (it.header("X-Bandwidth-Probe-Version") != "1" ||
+                    it.header("X-Bandwidth-Probe-Nonce") != nonce
+                ) {
+                    throw NetworkProbeException("invalid_response")
+                }
+
+                val probeStartedAt = System.nanoTime()
+                val buffer = ByteArray(DEFAULT_NETWORK_PROBE_BUFFER_BYTES)
+                val stream = it.body.byteStream()
+                while (true) {
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException()
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    receivedBytes += count
+                    progress?.invoke(receivedBytes, sampleBytes)
+                }
+                bodyDurationSeconds = (System.nanoTime() - probeStartedAt) / 1_000_000_000.0
+            }
+        } finally {
+            activeNetworkProbeCall.compareAndSet(call, null)
+        }
+
+        if (receivedBytes != sampleBytes) {
+            throw NetworkProbeException("incomplete_response")
+        }
+        if (bodyDurationSeconds <= 0.0) {
+            throw NetworkProbeException("invalid_duration")
+        }
+
+        // Drop the first request because it includes connection establishment and TLS setup.
+        val steadySamples = latencySamples.drop(1).ifEmpty { latencySamples }
+        val averageLatency = steadySamples.average()
+        val averageJitter = if (steadySamples.size < 2) 0.0 else
+            steadySamples.zipWithNext { left, right -> abs(right - left) }.average()
+
+        return NetworkProbeMeasurement(
+            bandwidthMbps = receivedBytes * 8.0 / bodyDurationSeconds / 1_000_000.0,
+            responseLatencyMs = averageLatency,
+            responseJitterMs = averageJitter,
+            receivedBytes = receivedBytes
+        )
+    }
+
+    fun cancelNetworkProbe() {
+        activeNetworkProbeCall.getAndSet(null)?.cancel()
+    }
+
+    internal fun parseNetworkProbeCapabilities(body: String): NetworkProbeCapabilities {
+        try {
+            val root = JSONObject(body)
+            val probe = root.getJSONObject("bandwidthProbe")
+            if (root.optInt("version", 0) < 1 || probe.optInt("version", 0) < 1) {
+                throw NetworkProbeException("unsupported_version")
+            }
+            val endpoint = probe.getString("endpoint")
+            val minBytes = probe.getLong("minBytes")
+            val maxBytes = probe.getLong("maxBytes")
+            if (endpoint != "/api/network/probe" || minBytes <= 0 || maxBytes < minBytes) {
+                throw NetworkProbeException("invalid_capabilities")
+            }
+            return NetworkProbeCapabilities(endpoint, minBytes, maxBytes)
+        } catch (e: NetworkProbeException) {
+            throw e
+        } catch (e: Exception) {
+            throw NetworkProbeException("invalid_capabilities", cause = e)
+        }
+    }
+
+    private fun parseNetworkProbeError(statusCode: Int, body: String): NetworkProbeException {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val reason = json?.optString("error")?.takeIf { it.isNotBlank() }
+            ?: String.format(Locale.US, "http_%d", statusCode)
+        return NetworkProbeException(reason, json?.optLong("retryAfterMs", 0) ?: 0)
     }
 
     /** 通知服务端启用/关闭 ABR。*/
@@ -936,6 +1176,8 @@ class NvHTTP(
         const val SHORT_CONNECTION_TIMEOUT = 3000
         const val LONG_CONNECTION_TIMEOUT = 5000
         const val READ_TIMEOUT = 7000
+        private const val MAX_NETWORK_PROBE_BYTES = 4L * 1024L * 1024L
+        private const val DEFAULT_NETWORK_PROBE_BUFFER_BYTES = 64 * 1024
 
         /**
          * Per-attempt timeout for clipboard blob upload/download. Generous
@@ -1004,7 +1246,79 @@ class NvHTTP(
 
         @Throws(XmlPullParserException::class, IOException::class)
         fun getXmlString(str: String, tagname: String, throwIfMissing: Boolean): String? {
-            return getXmlString(StringReader(str), tagname, throwIfMissing)
+            try {
+                return getXmlString(StringReader(str), tagname, throwIfMissing)
+            } catch (e: HostHttpResponseException) {
+                val sunshineErrorCode = try {
+                    getXmlTextIgnoringStatus(str, "sunshine_error_code")
+                } catch (_: Exception) {
+                    null
+                }
+                throw e.withSunshineErrorCode(sunshineErrorCode)
+            }
+        }
+
+        internal fun parseDisplayCatalog(jsonStr: String): DisplayCatalog {
+            val json = JSONObject(jsonStr)
+            val statusCode = json.optInt("status_code", 0)
+            if (statusCode != 200) {
+                throw IOException(
+                    "Failed to get displays: " +
+                        json.optString("status_message", "Unknown error")
+                )
+            }
+
+            val displaysArray = json.optJSONArray("displays")
+            val displays = ArrayList<DisplayInfo>(displaysArray?.length() ?: 0)
+            if (displaysArray != null) {
+                for (i in 0 until displaysArray.length()) {
+                    val displayObj = displaysArray.getJSONObject(i)
+                    var friendlyName = displayObj.optString("friendly_name", "")
+                    if (friendlyName.isEmpty()) {
+                        friendlyName =
+                            displayObj.optString("display_name", "Display ${i + 1}")
+                    }
+
+                    displays.add(
+                        DisplayInfo(
+                            i,
+                            friendlyName,
+                            displayObj.optString("device_id", "")
+                        )
+                    )
+                }
+            }
+
+            val vdd = json.optJSONObject("vdd")
+            return DisplayCatalog(
+                displays = displays,
+                vddCapabilityVersion = parseVddCapabilityVersion(
+                    vdd?.opt("capability_version")
+                ),
+                vddState = VddState.fromWireValue(vdd?.optString("state"))
+            )
+        }
+
+        internal fun parseVddCapabilityVersion(value: Any?): Int? =
+            value?.toString()?.toIntOrNull()?.takeIf { it >= 0 }
+
+        private fun getXmlTextIgnoringStatus(str: String, tagname: String): String? {
+            val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = true
+            val xpp = factory.newPullParser()
+            xpp.setInput(StringReader(str))
+
+            var insideTarget = false
+            var eventType = xpp.eventType
+            while (eventType != XmlPullParser.END_DOCUMENT) {
+                when (eventType) {
+                    XmlPullParser.START_TAG -> insideTarget = xpp.name == tagname
+                    XmlPullParser.TEXT -> if (insideTarget) return xpp.text
+                    XmlPullParser.END_TAG -> if (xpp.name == tagname) insideTarget = false
+                }
+                eventType = xpp.next()
+            }
+            return null
         }
 
         private fun verifyResponseStatus(xpp: XmlPullParser) {

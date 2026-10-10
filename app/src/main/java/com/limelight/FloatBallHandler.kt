@@ -2,6 +2,7 @@ package com.limelight
 
 import com.limelight.preferences.PreferenceConfiguration
 import com.limelight.ui.FloatBallManager
+import com.limelight.ui.FloatBallPreferences
 
 /**
  * 悬浮球初始化和手势动作分发。
@@ -12,7 +13,7 @@ class FloatBallHandler(private val game: Game, private val prefConfig: Preferenc
     var manager: FloatBallManager? = null
         private set
     private val actionExecutor = StreamActionExecutor(game, { game.conn })
-    private var visible = false
+    private var requestedVisible = false
 
     /**
      * 根据设置决定是否创建悬浮球并注册交互监听器。
@@ -20,6 +21,7 @@ class FloatBallHandler(private val game: Game, private val prefConfig: Preferenc
      */
     fun initialize() {
         if (!prefConfig.enableFloatBall) return
+        requestedVisible = true
 
         // 大小固定为50dp，透明度固定为100%
         // 根据自动隐藏延迟判断是否启用边缘吸附：延迟为0时不启用，此时用户可自由放置
@@ -29,7 +31,8 @@ class FloatBallHandler(private val game: Game, private val prefConfig: Preferenc
             50,   // 固定大小50dp
             100,  // 固定透明度100%
             prefConfig.floatBallAutoHideDelay.toLong(),
-            enableEdgeSnap
+            enableEdgeSnap,
+            FloatBallPreferences(game).presetPosition()
         )
 
         mgr.setOnFloatBallInteractListener(object : FloatBallManager.OnFloatBallInteractListener {
@@ -76,15 +79,25 @@ class FloatBallHandler(private val game: Game, private val prefConfig: Preferenc
         manager = mgr
     }
 
-    fun show() = manager?.showFloatBall()
-        ?.also { visible = true }
+    fun show() {
+        requestedVisible = true
+        manager?.showFloatBall()
+    }
 
-    fun hide() = manager?.hideFloatBall()
-        ?.also { visible = false }
+    fun hide() {
+        requestedVisible = false
+        manager?.hideFloatBall()
+    }
+
+    fun suppress() {
+        manager?.hideFloatBall()
+    }
 
     fun toggleVisibility() {
-        if (visible) hide() else show()
+        if (requestedVisible) hide() else show()
     }
+
+    fun isRequestedVisible(): Boolean = requestedVisible
 
     fun release() {
         manager?.release()
@@ -92,6 +105,8 @@ class FloatBallHandler(private val game: Game, private val prefConfig: Preferenc
     }
 
     private fun executeAction(actionType: String?) {
+        if (actionType.isNullOrEmpty() || actionType == "none") return
+
         if (!actionExecutor.execute(actionType)) {
             LimeLog.warning("Unknown float ball action: $actionType")
         }

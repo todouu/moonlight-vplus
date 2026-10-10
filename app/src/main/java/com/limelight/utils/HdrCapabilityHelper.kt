@@ -144,13 +144,50 @@ object HdrCapabilityHelper {
 
     @SuppressLint("NewApi")
     fun getHdrTypeSupport(context: Context?): HdrTypeSupport {
+        if (context == null) return HdrTypeSupport()
+        return getHdrTypeSupport(getDefaultDisplay(context))
+    }
+
+    /**
+     * Returns display-wide HDR capabilities without restricting them to the current display mode.
+     * This is intended for settings shown before a specific streaming mode has been selected.
+     */
+    @SuppressLint("NewApi")
+    fun getDisplayWideHdrTypeSupport(display: Display?): HdrTypeSupport {
+        if (display == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return HdrTypeSupport()
+        }
+
+        return parseHdrTypes(display.hdrCapabilities?.supportedHdrTypes ?: IntArray(0))
+    }
+
+    /**
+     * Returns HDR types for the selected display mode on Android 14+, where HDR support may vary
+     * by mode. Older releases expose only display-wide HDR capabilities.
+     */
+    @SuppressLint("NewApi")
+    fun getHdrTypeSupport(display: Display?, selectedModeId: Int = -1): HdrTypeSupport {
+        if (display == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return HdrTypeSupport()
+        }
+
+        val types = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val selectedMode = if (selectedModeId >= 0) {
+                display.supportedModes.firstOrNull { it.modeId == selectedModeId }
+            } else {
+                null
+            }
+            (selectedMode ?: display.mode).supportedHdrTypes
+        } else {
+            display.hdrCapabilities?.supportedHdrTypes ?: IntArray(0)
+        }
+
+        return parseHdrTypes(types)
+    }
+
+    @SuppressLint("InlinedApi")
+    private fun parseHdrTypes(types: IntArray): HdrTypeSupport {
         val support = HdrTypeSupport()
-        if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return support
-
-        val display = getDefaultDisplay(context) ?: return support
-        val hdrCaps = display.hdrCapabilities ?: return support
-
-        val types = hdrCaps.supportedHdrTypes
         support.rawTypes = types
 
         for (type in types) {
@@ -207,6 +244,13 @@ object HdrCapabilityHelper {
         val max = maxOf(min + 1, Math.ceil(effectiveMax.toDouble()).toInt())
         val avg = maxOf(min, Math.ceil(info.maxAvgLuminance.toDouble()).toInt())
         return intArrayOf(min, max, avg)
+    }
+
+    fun applyBrightnessOverride(range: IntArray, peakBrightnessNits: Int): IntArray {
+        val min = range.getOrElse(0) { 1 }.coerceAtLeast(1)
+        val peak = maxOf(min + 1, peakBrightnessNits.coerceIn(300, 4000))
+        val avg = (peak * 0.2f).toInt().coerceIn(100, 1000)
+        return intArrayOf(min, peak, maxOf(min, avg))
     }
 
     fun getSystemBrightness(context: Context): Int {

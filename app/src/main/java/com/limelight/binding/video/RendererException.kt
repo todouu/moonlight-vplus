@@ -4,7 +4,6 @@ import android.media.MediaCodec.CodecException
 import android.media.MediaCodecInfo
 import android.os.Build
 import com.limelight.BuildConfig
-import java.util.Objects
 
 /**
  * Diagnostic state snapshot captured when a renderer exception occurs.
@@ -26,6 +25,14 @@ internal class RendererDiagnostics(
     val adaptivePlayback: Boolean,
     val refFrameInvalidationActive: Boolean,
     val fusedIdrFrame: Boolean,
+    val hdr10PlusEligible: Boolean,
+    val hdr10PlusConfigured: Boolean,
+    val hdr10PlusOutputFramesQueried: Long,
+    val hdr10PlusMetadataFrames: Long,
+    val hdr10PlusMetadataChanges: Long,
+    val hdr10PlusLastMetadataSize: Int,
+    val hdr10PlusLastPresentationTimeUs: Long,
+    val hdr10PlusMetadataQueryFailures: Int,
     val glRenderer: String?,
     val avcDecoder: MediaCodecInfo?,
     val hevcDecoder: MediaCodecInfo?,
@@ -101,6 +108,15 @@ internal class RendererException(
         sb.append("RFI active: ${r.refFrameInvalidationActive}$d")
         sb.append("Using modern SPS patching: ${Build.VERSION.SDK_INT >= Build.VERSION_CODES.O}$d")
         sb.append("Fused IDR frames: ${r.fusedIdrFrame}$d")
+        sb.append(
+            "HDR10+: eligible=${r.hdr10PlusEligible}, configured=${r.hdr10PlusConfigured}, " +
+                "observed=${r.hdr10PlusConfigured && r.hdr10PlusMetadataFrames > 0}, " +
+                "queried=${r.hdr10PlusOutputFramesQueried}, " +
+                "metadata=${r.hdr10PlusMetadataFrames}, changes=${r.hdr10PlusMetadataChanges}, " +
+                "lastSize=${r.hdr10PlusLastMetadataSize}, " +
+                "lastPtsUs=${r.hdr10PlusLastPresentationTimeUs}, " +
+                "queryFailures=${r.hdr10PlusMetadataQueryFailures}$d"
+        )
         sb.append("Video dimensions: ${r.initialWidth}x${r.initialHeight}$d")
         sb.append("FPS target: ${r.refreshRate}$d")
         sb.append("Bitrate: ${r.bitrate} Kbps$d")
@@ -135,15 +151,12 @@ internal class RendererException(
         d: String,
     ) {
         if (decoder == null) return
-        val widthRange = Objects.requireNonNull(
-            decoder.getCapabilitiesForType(mimeType).videoCapabilities
-        ).supportedWidths
+        val videoCapabilities = decoder.getCapabilitiesForType(mimeType).videoCapabilities ?: return
+        val widthRange = videoCapabilities.supportedWidths
         sb.append("$label supported width range: $widthRange$d")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
-                val fpsRange = Objects.requireNonNull(
-                    decoder.getCapabilitiesForType(mimeType).videoCapabilities
-                ).getAchievableFrameRatesFor(r.initialWidth, r.initialHeight)
+                val fpsRange = videoCapabilities.getAchievableFrameRatesFor(r.initialWidth, r.initialHeight)
                 sb.append("$label achievable FPS range: $fpsRange$d")
             } catch (_: IllegalArgumentException) {
                 sb.append("$label achievable FPS range: UNSUPPORTED!$d")

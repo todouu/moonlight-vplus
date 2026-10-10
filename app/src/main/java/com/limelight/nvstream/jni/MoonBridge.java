@@ -1,6 +1,8 @@
 package com.limelight.nvstream.jni;
 
+import com.limelight.nvstream.Ds5HapticsPcmFrame;
 import com.limelight.nvstream.NvConnectionListener;
+import com.limelight.nvstream.RemoteTextContext;
 import com.limelight.nvstream.av.audio.AudioRenderer;
 import com.limelight.nvstream.av.video.VideoDecoderRenderer;
 
@@ -46,15 +48,42 @@ public class MoonBridge {
     public static final int COLOR_RANGE_LIMITED = 0;
     public static final int COLOR_RANGE_FULL = 1;
 
-    // HDR mode values for dynamicRangeMode parameter
+    // Client-side HDR mode values. HDR_MODE_HDR10_PLUS is a local selection that
+    // uses the HDR10/PQ dynamicRangeMode on the wire and additionally enables
+    // Android's HDR10+ metadata path.
     public static final int HDR_MODE_SDR = 0;      // SDR (default)
     public static final int HDR_MODE_HDR10 = 1;    // HDR10/PQ (SMPTE ST 2084)
     public static final int HDR_MODE_HLG = 2;      // HLG (Hybrid Log-Gamma, ARIB STD-B67)
+    public static final int HDR_MODE_HDR10_PLUS = 3; // HDR10/PQ with ST 2094-40 dynamic metadata
+    public static final int HDR_MODE_DOLBY_VISION = 4; // HDR10/PQ base with Dolby Vision Profile 8.1 RPU (client-only selection)
+    public static final int HDR_MODE_DOLBY_VISION_84 = 5; // HLG base with Dolby Vision Profile 8.4 RPU (client-only selection)
+
+    // Dynamic HDR capability bits for setDynamicHdrNegotiation() and the
+    // x-ss-video[0].dynamicHdrCaps SDP attribute (Sunshine extension).
+    public static final int DYNAMIC_HDR_CAPS_NONE = 0;
+    public static final int DYNAMIC_HDR_CAPS_HDR10_PLUS = 1 << 0;
+    public static final int DYNAMIC_HDR_CAPS_VIVID_PQ = 1 << 1;
+    public static final int DYNAMIC_HDR_CAPS_VIVID_HLG = 1 << 2;
+    public static final int DYNAMIC_HDR_CAPS_DOLBY_VISION_81 = 1 << 3;
+    public static final int DYNAMIC_HDR_CAPS_DOLBY_VISION_84 = 1 << 4;
+
+    // dynamicHdrPreference values (0 automatic / 1 Dolby Vision / 2 HDR10+ / 3 HDR10 only)
+    public static final int DYNAMIC_HDR_PREFERENCE_AUTOMATIC = 0;
+    public static final int DYNAMIC_HDR_PREFERENCE_DOLBY_VISION = 1;
+    public static final int DYNAMIC_HDR_PREFERENCE_HDR10_PLUS = 2;
+    public static final int DYNAMIC_HDR_PREFERENCE_HDR10_ONLY = 3;
+
+    // LiGetNegotiatedDynamicHdrFormat() results (X-SS-Dynamic-HDR values)
+    public static final int NEGOTIATED_DYNAMIC_HDR_NONE = 0;
+    public static final int NEGOTIATED_DYNAMIC_HDR_HDR10_PLUS = 1;
+    public static final int NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_81 = 4;
+    public static final int NEGOTIATED_DYNAMIC_HDR_DOLBY_VISION_PROFILE_84 = 5;
 
     public static final int CAPABILITY_DIRECT_SUBMIT = 1;
     public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC = 2;
     public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC = 4;
     public static final int CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1 = 0x40;
+    public static final int CAPABILITY_PRESERVE_HEVC_SEI = 0x80;
 
     public static final int DR_OK = 0;
     public static final int DR_NEED_IDR = -1;
@@ -92,6 +121,20 @@ public class MoonBridge {
 
     public static final int LI_ERR_UNSUPPORTED = -5501;
 
+    public static final int LI_FF_TOUCHPAD_FRAME_EVENTS = 0x20;
+    public static final int LI_FF_CURSOR_SHAPE = 0x40;
+
+    public static final int LI_CURSOR_UPDATE_FLAG_SHAPE = 0x01;
+    public static final int LI_CURSOR_UPDATE_FLAG_VISIBLE = 0x02;
+
+    public static final int LI_CURSOR_MODE_VIDEO = 0;
+    public static final int LI_CURSOR_MODE_LOCAL = 1;
+    public static final int LI_CURSOR_MODE_OK = 0;
+    public static final int LI_CURSOR_MODE_ERR_INVALID = -1;
+    public static final int LI_CURSOR_MODE_ERR_UNSUPPORTED = -2;
+    public static final int LI_CURSOR_MODE_ERR_NOT_CONNECTED = -3;
+    public static final int LI_CURSOR_MODE_ERR_SEND_FAILED = -4;
+
     public static final byte LI_TOUCH_EVENT_HOVER       = 0x00;
     public static final byte LI_TOUCH_EVENT_DOWN        = 0x01;
     public static final byte LI_TOUCH_EVENT_UP          = 0x02;
@@ -109,6 +152,8 @@ public class MoonBridge {
     public static final byte LI_PEN_BUTTON_SECONDARY = 0x02;
     public static final byte LI_PEN_BUTTON_TERTIARY = 0x04;
 
+    public static final byte SS_TOUCHPAD_BUTTON_PRIMARY = 0x01;
+
     public static final byte LI_TILT_UNKNOWN = (byte)0xFF;
     public static final short LI_ROT_UNKNOWN = (short)0xFFFF;
 
@@ -125,6 +170,10 @@ public class MoonBridge {
     public static final short LI_CCAP_GYRO            = 0x20;
     public static final short LI_CCAP_BATTERY_STATE   = 0x40;
     public static final short LI_CCAP_RGB_LED         = 0x80;
+    // Foundation Sunshine extension: prefer a DualSense device over DS4 for PS controllers.
+    // Foundation extensions claim the top capability bit; upstream moonlight-common-c
+    // owns the low bits (currently 0x00FF). Keep in sync with Sunshine's GAMEPAD_CAP_PREFER_DS5.
+    public static final short LI_CCAP_PREFER_DS5      = (short) 0x8000;
 
     public static final byte LI_MOTION_TYPE_ACCEL = 0x01;
     public static final byte LI_MOTION_TYPE_GYRO  = 0x02;
@@ -169,19 +218,7 @@ public class MoonBridge {
 
     private static AudioRenderer audioRenderer;
     private static VideoDecoderRenderer videoRenderer;
-    private static NvConnectionListener connectionListener;
-    private static BassEnergyListener bassEnergyListener;
-
-    /**
-     * Listener for bass energy callbacks from native audio processing.
-     */
-    public interface BassEnergyListener {
-        void onBassEnergy(int intensity, int lowFreqRatio);
-    }
-
-    public static void setBassEnergyListener(BassEnergyListener listener) {
-        bassEnergyListener = listener;
-    }
+    private static volatile NvConnectionListener connectionListener;
 
     static {
         System.loadLibrary("moonlight-core");
@@ -272,10 +309,11 @@ public class MoonBridge {
 
     public static int bridgeDrSubmitDecodeUnit(byte[] decodeUnitData, int decodeUnitLength, int decodeUnitType,
                                                int frameNumber, int frameType, char frameHostProcessingLatency,
-                                               long receiveTimeUs, long enqueueTimeUs) {
+                                               long receiveTimeUs, long enqueueTimeUs, long hostPresentationTimeUs) {
         if (videoRenderer != null) {
             return videoRenderer.submitDecodeUnit(decodeUnitData, decodeUnitLength,
-                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs);
+                    decodeUnitType, frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                    hostPresentationTimeUs);
         }
         else {
             return DR_OK;
@@ -324,19 +362,6 @@ public class MoonBridge {
     public static void bridgeArPlayEncodedSample(byte[] encodedData, int length) {
         if (audioRenderer != null) {
             audioRenderer.playEncodedAudio(encodedData, length);
-        }
-    }
-
-    /**
-     * Called from native layer (callbacks.c) when bass energy analysis
-     * produces a reportable intensity value.
-     *
-     * @param intensity Vibration intensity (0-100)
-     * @param lowFreqRatio Low-frequency energy ratio (0-100), for low/high motor allocation
-     */
-    public static void bridgeBassEnergy(int intensity, int lowFreqRatio) {
-        if (bassEnergyListener != null) {
-            bassEnergyListener.onBassEnergy(intensity, lowFreqRatio);
         }
     }
 
@@ -394,6 +419,15 @@ public class MoonBridge {
         }
     }
 
+    public static void bridgeClSetAdaptiveTriggers(short controllerNumber, byte eventFlags,
+                                                   byte typeLeft, byte typeRight,
+                                                   byte[] left, byte[] right) {
+        if (connectionListener != null) {
+            connectionListener.setAdaptiveTriggers(
+                    controllerNumber, eventFlags, typeLeft, typeRight, left, right);
+        }
+    }
+
     public static void bridgeClSetMotionEventState(short controllerNumber, byte eventType, short sampleRateHz) {
         if (connectionListener != null) {
             connectionListener.setMotionEventState(controllerNumber, eventType, sampleRateHz);
@@ -403,6 +437,16 @@ public class MoonBridge {
     public static void bridgeClSetControllerLED(short controllerNumber, byte r, byte g, byte b) {
         if (connectionListener != null) {
             connectionListener.setControllerLED(controllerNumber, r, g, b);
+        }
+    }
+
+    public static void bridgeClDs5HapticsPcm(short controllerNumber, byte flags, int sequenceNumber,
+                                                long presentationTimeUs, int sampleRate, int frameCount,
+                                                byte channelCount, byte bitsPerSample, byte[] pcm) {
+        if (connectionListener != null) {
+            connectionListener.ds5HapticsPcm(new Ds5HapticsPcmFrame(
+                    controllerNumber, flags, sequenceNumber, presentationTimeUs,
+                    sampleRate, frameCount, channelCount, bitsPerSample, pcm));
         }
     }
 
@@ -436,6 +480,25 @@ public class MoonBridge {
         l.onClipboardData(kind, token, payload);
     }
 
+    public static void bridgeClCursorUpdate(int flags, int shapeId, int width, int height,
+                                            int hotspotX, int hotspotY, byte[] bgraPixels) {
+        if (connectionListener != null) {
+            connectionListener.onCursorUpdate(flags, shapeId, width, height,
+                    hotspotX, hotspotY, bgraPixels);
+        }
+    }
+
+    public static void bridgeClRemoteTextContext(int[] values, long activationId, long inputToken) {
+        NvConnectionListener listener = connectionListener;
+        if (listener == null || values == null || values.length != 16) return;
+        listener.onRemoteTextContext(new RemoteTextContext(
+                values[0], values[1], activationId, inputToken,
+                values[2], values[3], values[4], values[5],
+                values[6], values[7], values[8], values[9],
+                values[10], values[11], values[12], values[13],
+                values[14], values[15]));
+    }
+
     /**
      * Encode a v1 clipboard frame and send it to the host. Returns 0 on success;
      * negative on failure (-1 invalid args, -2 unsupported by host, -3 transport).
@@ -467,11 +530,16 @@ public class MoonBridge {
         MoonBridge.connectionListener = connectionListener;
     }
 
+    public static synchronized void detachConnectionListener(NvConnectionListener listener) {
+        if (MoonBridge.connectionListener == listener) {
+            MoonBridge.connectionListener = null;
+        }
+    }
+
     public static void cleanupBridge() {
         MoonBridge.videoRenderer = null;
         MoonBridge.audioRenderer = null;
         MoonBridge.connectionListener = null;
-        MoonBridge.bassEnergyListener = null;
         MoonBridge.clipboardListener = null;
     }
 
@@ -485,7 +553,18 @@ public class MoonBridge {
                                               int videoCapabilities,
                                               int colorSpace, int colorRange, int hdrMode,
                                               boolean enableMic, boolean controlOnly,
-                                              int audioCodec, int audioBitrate);
+                                              int audioCodec, int audioBitrate, boolean authoredPcmHaptics);
+
+    // Sunshine dynamic HDR negotiation result. Valid after the connection
+    // callback reports the session is established (RTSP handshake complete).
+    public static native int getNegotiatedDynamicHdrFormat();
+
+    // Sunshine dynamic HDR negotiation: opt this connection in BEFORE
+    // startConnection(). Zero values (the default) are a legacy client that
+    // sends no negotiation attributes. Kept as a separate setter rather than
+    // more startConnection parameters — that signature is already unwieldy.
+    public static native void setDynamicHdrNegotiation(
+        int caps, int dolbyVisionDirectSurface, int dynamicHdrPreference);
 
     public static native void stopConnection();
 
@@ -507,6 +586,14 @@ public class MoonBridge {
 
     public static native int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure,
                                             float contactAreaMajor, float contactAreaMinor, short rotation);
+
+    public static native int sendTouchpadEvent(byte eventType, int pointerId, float x, float y, float pressure,
+                                               float contactAreaMajor, float contactAreaMinor, short rotation,
+                                               short deviceWidthMm, short deviceHeightMm, byte buttonState);
+
+    public static native int sendTouchpadFrameEvent(byte contactCount, byte[] eventTypes, int[] pointerIds,
+                                                    float[] x, float[] y, float[] pressure, short rotation,
+                                                    short deviceWidthMm, short deviceHeightMm, byte buttonState);
 
     public static native int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y,
                                           float pressure, float contactAreaMajor, float contactAreaMinor,
@@ -554,6 +641,9 @@ public class MoonBridge {
     // The RTT is in the top 32 bits, and the RTT variance is in the bottom 32 bits
     public static native long getEstimatedRttInfo();
 
+    /** Returns wire-level bytes received by the active video RTP stream. */
+    public static native long getRtpVideoBytesReceived();
+
     public static native String getLaunchUrlQueryParameters();
 
     public static native byte guessControllerType(int vendorId, int productId);
@@ -566,6 +656,9 @@ public class MoonBridge {
 
     // This function returns any extended feature flags supported by the host.
     public static native int getHostFeatureFlags();
+
+    /** Selects host-composited or locally-rendered cursor mode for this session. */
+    public static native int setCursorMode(int cursorMode);
 
     /** @return Negotiated audio codec for the active connection (AUDIO_CODEC_OPUS/AC3/EAC3). */
     public static native int getNegotiatedAudioCodec();
@@ -581,19 +674,19 @@ public class MoonBridge {
     
     public static native boolean isMicrophoneEncryptionEnabled();
 
-    // Bass energy analyzer control (audio-driven vibration)
-    public static native void setBassEnergyEnabled(boolean enabled);
-    public static native void setBassEnergySensitivity(float sensitivity);
-    public static native void setBassEnergySceneMode(int mode);
+    // Project-owned audio haptics SDK control
+    public static native void setAudioHapticsSceneMode(int mode);
+    public static native void setAudioHapticsOutputEnabled(boolean enabled);
+    public static native void setAudioHapticsSessionHandle(long handle);
 
     // Surface DataSpace control for HDR color space
     // Uses ANativeWindow_setBuffersDataSpace() via JNI (API 28+)
 
-    // DataSpace constants: STANDARD_BT2020 | TRANSFER | RANGE
-    public static final int DATASPACE_BT2020_HLG_FULL = 0x09C60000;
-    public static final int DATASPACE_BT2020_HLG_LIMITED = 0x11C60000;
-    public static final int DATASPACE_BT2020_PQ_FULL = 0x09860000;
-    public static final int DATASPACE_BT2020_PQ_LIMITED = 0x11860000;
+    // DataSpace constants from android/data_space.h: STANDARD_BT2020 | TRANSFER | RANGE
+    public static final int DATASPACE_BT2020_HLG_FULL = 0x0A060000;
+    public static final int DATASPACE_BT2020_HLG_LIMITED = 0x12060000;
+    public static final int DATASPACE_BT2020_PQ_FULL = 0x09C60000;
+    public static final int DATASPACE_BT2020_PQ_LIMITED = 0x11C60000;
 
     /**
      * Set the DataSpace on a Surface for HDR content.

@@ -1,7 +1,10 @@
 @file:Suppress("DEPRECATION")
 package com.limelight.preferences
 
+import com.limelight.nvstream.HostGamepadSelection
+
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Point
 import android.media.AudioFormat
@@ -11,13 +14,22 @@ import android.view.Display
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.preference.PreferenceManager
+import com.limelight.binding.input.haptics.GameRumbleMode
 import com.limelight.nvstream.jni.MoonBridge
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+private fun SharedPreferences.getBooleanOrNull(key: String): Boolean? =
+    if (contains(key)) getBoolean(key, false) else null
+
 class PreferenceConfiguration {
+
+    internal fun refreshControllerMotionPreferencesFrom(latest: PreferenceConfiguration) {
+        gamepadMotionSensors = latest.gamepadMotionSensors
+        gamepadMotionSensorsFallbackToDevice = latest.gamepadMotionSensorsFallbackToDevice
+    }
 
     enum class FormatOption {
         AUTO,
@@ -66,6 +78,7 @@ class PreferenceConfiguration {
     var enableDoubleClickDrag = false
     var doubleTapTimeThreshold = 0
     var enableLocalCursorRendering = false
+    var optimizeHardwareTouchpad = false
     //自定义按键映射
     var enableCustomKeyMap = false
     //修复鼠标中键识别
@@ -75,6 +88,14 @@ class PreferenceConfiguration {
 
     var width = 0
     var height = 0
+    /** True when the user selected the Native resolution entry rather than a fixed preset. */
+    var isNativeResolution = false
+    /** True when the selected resolution is a user-defined custom mode. */
+    var isCustomResolution = false
+    /** Display-mode behavior used by Native and custom resolutions. */
+    val usesNativeDisplayMode: Boolean
+        get() = isNativeResolution || isCustomResolution ||
+            PreferenceConfiguration.isNativeResolution(width, height)
     var fps = 0
     var resolutionScale = 0
     var bitrate = 0
@@ -98,38 +119,47 @@ class PreferenceConfiguration {
     var language: String = ""
     var smallIconMode = false
     var multiController = false
+    var combineJoyCons = true
     var usbDriver = false
+    var allowExperimentalHaptics = false
+    var hostGamepadSelection = HostGamepadSelection.AUTOMATIC
+    var dualSenseWirelessBridge = false
+    var dualSenseDirectBluetooth = false
     @JvmField var flipFaceButtons = false
     var onscreenController = false
     var onscreenKeyboard = false
     var enableCrownFeatures = false
+    @JvmField var oscLayout = "xbox"
     @JvmField var onlyL3R3 = false
     @JvmField var showGuideButton = false
     @JvmField var halfHeightOscPortrait = false
     var enableHdr = false
     var enableHdrHighBrightness = false
-    var hdrMode = 0 // 0=HDR disabled, 1=HDR10/PQ, 2=HLG
+    var hdrBrightnessOverride = false
+    var hdrPeakBrightnessNits = 1000
+    var hdrMode = 0 // 0=HDR disabled, 1=HDR10/PQ, 2=HLG, 3=HDR10+ (local selection)
     var enablePip = false
     var enablePerfOverlay = false
+    var enableJitterMonitor = false
     var perfOverlayLocked = false
     var perfOverlayBgOpacity = 0
+    var gameMenuOpacity = DEFAULT_GAME_MENU_OPACITY
     var perfOverlayOrientation: PerfOverlayOrientation = PerfOverlayOrientation.HORIZONTAL
     var perfOverlayPosition: PerfOverlayPosition = PerfOverlayPosition.TOP
     var enableSimplifyPerfOverlay = false
     var enableLatencyToast = false
     var enableStun = false
-    var screenCombinationMode = 0
-    var vddScreenCombinationMode = 0
+    var screenCombinationMode = -1
     var lockScreenAfterDisconnect = false
     var swapQuitAndDisconnect = false
     var bindAllUsb = false
-    var mouseEmulation = false
     var analogStickForScrolling: AnalogStickForScrolling = AnalogStickForScrolling.NONE
+    var controllerMouseSpeedPercent = 100
+    var controllerMouseDpadArrows = false
     var mouseNavButtons = false
     var unlockFps = false
-    var vibrateOsc = false
-    var vibrateFallbackToDevice = false
-    var vibrateFallbackToDeviceStrength = 0
+    var gameRumbleMode = GameRumbleMode.CONTROLLER
+    var deviceRumbleStrength = 0
     var enableAudioVibration = false
     var audioVibrationStrength = 0
     var audioVibrationMode: String = ""
@@ -141,6 +171,10 @@ class PreferenceConfiguration {
     /** Sync local clipboard images (PNG) with the host. */
     var enableClipboardSyncImage = false
     var touchscreenTrackpad = false
+    /** Use the device touchscreen as the touchpad of a virtual DualSense controller. */
+    var screenDs5Touchpad = false
+    /** Ask the host to auto-invoke its touch keyboard when a text field gains focus (Sunshine extension). */
+    var touchKeyboardAutoInvoke = true
     var audioConfiguration: MoonBridge.AudioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO
     /** Negotiated audio codec preference — see [MoonBridge.AUDIO_CODEC_OPUS] etc. */
     var audioCodec: Int = MoonBridge.AUDIO_CODEC_OPUS
@@ -148,7 +182,9 @@ class PreferenceConfiguration {
     var audioCodecBitrate: Int = 0
     /** AC3 passthrough AudioTrack buffer size in bytes — trade jitter resilience for latency. */
     var audioPassthroughBufferBytes: Int = 16 * 1024
+    var useAc3Iec61937: Boolean = false
     var framePacing = 0
+    var enableHostCadencePreciseSync = false // 精确同步·两步 host-cadence 呈现（仅精确同步模式生效）
     var absoluteMouseMode = false
     var enableNativeMousePointer = false
     var enableAudioFx = false
@@ -156,6 +192,8 @@ class PreferenceConfiguration {
     /** When false, SmartAudioRenderer skips PCM/AC3 passthrough and always uses the software renderer. */
     var enableAudioPassthrough = false
     var forceMtkMaxOperatingRate = false
+    /** HEVC 解码器低延迟模式：AUTO 按 Amlogic 类规则跳过，OFF 全局跳过，ON 恢复旧行为。 */
+    var hevcLowLatencyMode = HEVC_LOW_LATENCY_AUTO
     var reduceRefreshRate = false
     var fullRange = false
     var gamepadMotionSensors = false
@@ -163,12 +201,10 @@ class PreferenceConfiguration {
     var gamepadMotionSensorsFallbackToDevice = false
     var reverseResolution = false
     var rotableScreen = false
-    // Runtime-only: enable mapping gyroscope motion to right analog stick
+    // Persistent: enable mapping gyroscope motion to right analog stick
     var gyroToRightStick = false
-    // Runtime-only: enable mapping gyroscope motion to relative mouse movement
+    // Persistent: enable mapping gyroscope motion to relative mouse movement
     var gyroToMouse = false
-    // Runtime-only: sensitivity in deg/s for full stick deflection
-    var gyroFullDeflectionDps = 0f
     // Persistent: sensitivity multiplier (higher -> faster)
     var gyroSensitivityMultiplier = 0f
     // Persistent: activation keycode to hold (Android keycode); 0 means LT analog, 1 means RT analog, otherwise Android key
@@ -179,6 +215,7 @@ class PreferenceConfiguration {
     var gyroInvertYAxis = false
     // Card visibility
     var showBitrateCard = false
+    var showAudioHapticsCard = false
     var showGyroCard = false
     var showQuickKeyCard = false
 
@@ -186,6 +223,16 @@ class PreferenceConfiguration {
     var enableMic = false
     var micBitrate = 0
     var micIconColor: String = ""
+    var micMenuActionMode: String = MIC_MENU_ACTION_SHOW_BUTTON
+    var micInitialState: String = MicrophoneInitialState.OFF.preferenceValue
+
+    // 麦克风音量增益及其平衡设置
+    var micVolumeProcessingEnabled = false // 音量增益及其平衡总开关
+    var micGainEnabled = false // 音量增益（固定增益）
+    var micGainDb = 0 // 固定增益 dB -20~+20，0dB为原始音量
+    var micBalanceEnabled = false // 音量平衡（自动增益）
+    var micBalanceTargetPercent = 50 // 平衡目标音量百分比 1-100
+    var micVoiceEnhancementEnabled = true // 人声增强独立开关（默认开启）
 
     // ESC菜单设置
     var enableEscMenu = false
@@ -248,44 +295,119 @@ class PreferenceConfiguration {
                 ScreenPosition.CENTER -> "center"
             }
 
+            val resolutionPreference = if (isNativeResolution) {
+                RES_NATIVE
+            } else {
+                "${width}x${height}"
+            }
+
             val editor = prefs.edit()
-                .putString(RESOLUTION_PREF_STRING, "${width}x${height}")
+                .putString(RESOLUTION_PREF_STRING, resolutionPreference)
                 .putString(FPS_PREF_STRING, fps.toString())
                 .putInt(BITRATE_PREF_STRING, bitrate)
                 .putString(VIDEO_FORMAT_PREF_STRING, getVideoFormatPreferenceString(videoFormat))
                 .putBoolean(ENABLE_HDR_PREF_STRING, enableHdr)
                 .putBoolean(ENABLE_HDR_HIGH_BRIGHTNESS_PREF_STRING, enableHdrHighBrightness)
+                .putBoolean(HDR_BRIGHTNESS_OVERRIDE_PREF_STRING, hdrBrightnessOverride)
+                .putInt(HDR_PEAK_BRIGHTNESS_NITS_PREF_STRING, hdrPeakBrightnessNits)
                 .putBoolean(ENABLE_PERF_OVERLAY_STRING, enablePerfOverlay)
+                .putBoolean(ENABLE_JITTER_MONITOR_STRING, enableJitterMonitor)
                 .putBoolean(PERF_OVERLAY_LOCKED_STRING, perfOverlayLocked)
                 .putInt(PERF_OVERLAY_BG_OPACITY_STRING, perfOverlayBgOpacity)
+                .putInt(GAME_MENU_OPACITY_PREF_STRING, gameMenuOpacity)
                 .putBoolean(REVERSE_RESOLUTION_PREF_STRING, reverseResolution)
                 .putBoolean(ROTABLE_SCREEN_PREF_STRING, rotableScreen)
                 .putBoolean(SHOW_BITRATE_CARD_PREF_STRING, showBitrateCard)
+                .putBoolean(SHOW_AUDIO_HAPTICS_CARD_PREF_STRING, showAudioHapticsCard)
                 .putBoolean(SHOW_GYRO_CARD_PREF_STRING, showGyroCard)
                 .putBoolean(SHOW_QuickKeyCard, showQuickKeyCard)
+                .putBoolean(AUDIO_VIBRATION_ENABLE_PREF_STRING, enableAudioVibration)
+                .putInt(AUDIO_VIBRATION_STRENGTH_PREF_STRING, audioVibrationStrength)
+                .putString(AUDIO_VIBRATION_MODE_PREF_STRING, audioVibrationMode)
+                .putInt(CONTROLLER_MOUSE_SPEED_PREF_STRING, controllerMouseSpeedPercent)
+                .putString(CONTROLLER_MOUSE_DPAD_PREF_STRING,
+                    if (controllerMouseDpadArrows) "arrows" else "scroll")
+                .putString(AUDIO_VIBRATION_SCENE_PREF_STRING, audioVibrationScene.toString())
                 .putString(SCREEN_POSITION_PREF_STRING, positionString)
                 .putInt(SCREEN_OFFSET_X_PREF_STRING, screenOffsetX)
                 .putInt(SCREEN_OFFSET_Y_PREF_STRING, screenOffsetY)
-                .putBoolean("use_external_display", useExternalDisplay)
+                .putBoolean(USE_EXTERNAL_DISPLAY_PREF_STRING, useExternalDisplay)
                 .putBoolean(ENABLE_MIC_PREF_STRING, enableMic)
                 .putInt(MIC_BITRATE_PREF_STRING, micBitrate)
                 .putString(MIC_ICON_COLOR_PREF_STRING, micIconColor)
+                .putString(MIC_MENU_ACTION_MODE_PREF_STRING, micMenuActionMode)
+                .putString(MIC_INITIAL_STATE_PREF_STRING, micInitialState)
+                .putString(
+                    MIC_VOLUME_PROCESSING_MODE_PREF_STRING,
+                    MicVolumeProcessingPolicy.modeFor(
+                        micVolumeProcessingEnabled,
+                        micGainEnabled,
+                        micBalanceEnabled,
+                    ),
+                )
+                .putBoolean(MIC_VOLUME_PROCESSING_PREF_STRING, micVolumeProcessingEnabled)
+                .putBoolean(MIC_GAIN_ENABLED_PREF_STRING, micGainEnabled)
+                .putInt(MIC_GAIN_DB_PREF_STRING, micGainDb)
+                .putBoolean(MIC_BALANCE_ENABLED_PREF_STRING, micBalanceEnabled && !micGainEnabled)
+                .putInt(MIC_BALANCE_TARGET_PERCENT_PREF_STRING, micBalanceTargetPercent)
+                .putBoolean(MIC_VOICE_ENHANCEMENT_PREF_STRING, micVoiceEnhancementEnabled)
                 .putBoolean(ENABLE_ESC_MENU_PREF_STRING, enableEscMenu)
                 .putString(ESC_MENU_KEY_PREF_STRING, escMenuKey.toString())
                 .putBoolean(ENABLE_START_KEY_MENU_PREF_STRING, enableStartKeyMenu)
                 .putBoolean(CONTROL_ONLY_PREF_STRING, controlOnly)
+                .putBoolean(ENABLE_ENHANCED_TOUCH_PREF_STRING, enableEnhancedTouch)
+                .putInt(LONG_PRESS_FLAT_REGION_PIXELS_PREF_STRING, longPressflatRegionPixels)
+                .putBoolean(ENHANCED_TOUCH_ON_RIGHT_PREF_STRING, enhancedTouchOnWhichSide)
+                .putInt(ENHANCED_TOUCH_ZONE_DIVIDER_PREF_STRING, enhanceTouchZoneDivider)
+                .putInt(
+                    POINTER_VELOCITY_FACTOR_PREF_STRING,
+                    pointerVelocityFactor.roundToInt()
+                )
+                .putBoolean(TOUCHSCREEN_TRACKPAD_PREF_STRING, touchscreenTrackpad)
+                .putBoolean(TOUCH_KEYBOARD_AUTO_INVOKE_PREF_STRING, touchKeyboardAutoInvoke)
                 .putBoolean(ENABLE_NATIVE_MOUSE_POINTER_PREF_STRING, enableNativeMousePointer)
+                .putBoolean(SCREEN_DS5_TOUCHPAD_PREF_STRING, screenDs5Touchpad)
                 .putBoolean(FORCE_MTK_MAX_OPERATING_RATE_PREF_STRING, forceMtkMaxOperatingRate)
+                .putString(
+                    HEVC_LOW_LATENCY_MODE_PREF_STRING,
+                    when (hevcLowLatencyMode) {
+                        HEVC_LOW_LATENCY_ON -> "on"
+                        HEVC_LOW_LATENCY_OFF -> "off"
+                        else -> DEFAULT_HEVC_LOW_LATENCY_MODE
+                    }
+                )
                 .putBoolean(ENABLE_DOUBLE_CLICK_DRAG_PREF_STRING, enableDoubleClickDrag)
                 .putBoolean(ENABLE_LOCAL_CURSOR_RENDERING_PREF_STRING, enableLocalCursorRendering)
+                .putBoolean(OPTIMIZE_HARDWARE_TOUCHPAD_PREF_STRING, optimizeHardwareTouchpad)
                 .putFloat(GYRO_SENSITIVITY_MULTIPLIER_PREF_STRING, gyroSensitivityMultiplier)
                 .putBoolean(GYRO_INVERT_X_AXIS_PREF_STRING, gyroInvertXAxis)
                 .putBoolean(GYRO_INVERT_Y_AXIS_PREF_STRING, gyroInvertYAxis)
                 .putInt(GYRO_ACTIVATION_KEY_CODE_PREF_STRING, gyroActivationKeyCode)
+                .putBoolean(GYRO_TO_RIGHT_STICK_PREF_STRING, gyroToRightStick)
+                .putBoolean(GYRO_TO_MOUSE_PREF_STRING, gyroToMouse)
 
             if (synchronous) {
                 editor.commit()
             } else {
+                editor.apply()
+                true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /** Persist only the split direct-touch fields owned by sensitivity presets. */
+    fun writeTouchPointerPreferences(context: Context, synchronous: Boolean = false): Boolean {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context) ?: return false
+        return try {
+            val editor = prefs.edit()
+                .putInt(LONG_PRESS_FLAT_REGION_PIXELS_PREF_STRING, longPressflatRegionPixels)
+                .putBoolean(ENHANCED_TOUCH_ON_RIGHT_PREF_STRING, enhancedTouchOnWhichSide)
+                .putInt(ENHANCED_TOUCH_ZONE_DIVIDER_PREF_STRING, enhanceTouchZoneDivider)
+                .putInt(POINTER_VELOCITY_FACTOR_PREF_STRING, pointerVelocityFactor.roundToInt())
+            if (synchronous) editor.commit() else {
                 editor.apply()
                 true
             }
@@ -304,13 +426,17 @@ class PreferenceConfiguration {
 
         return try {
             prefs.edit()
-                .putString(RESOLUTION_PREF_STRING, "${width}x${height}")
+                .putString(
+                    RESOLUTION_PREF_STRING,
+                    if (isNativeResolution) RES_NATIVE else "${width}x${height}"
+                )
                 .putString(FPS_PREF_STRING, fps.toString())
                 .putInt(BITRATE_PREF_STRING, bitrate)
                 .putBoolean(ADAPTIVE_BITRATE_PREF_STRING, enableAdaptiveBitrate)
                 .putString(ABR_MODE_PREF_STRING, abrMode)
                 .putString(VIDEO_FORMAT_PREF_STRING, getVideoFormatPreferenceString(videoFormat))
                 .putString(FRAME_PACING_PREF_STRING, getFramePacingPreferenceString(framePacing))
+                .putBoolean(ENABLE_HOST_CADENCE_PRECISE_SYNC_STRING, enableHostCadencePreciseSync)
                 .putBoolean(STRETCH_PREF_STRING, stretchVideo)
                 .putBoolean(SOPS_PREF_STRING, enableSops)
                 .putBoolean(UNLOCK_FPS_STRING, unlockFps)
@@ -318,10 +444,14 @@ class PreferenceConfiguration {
                 .putBoolean(FULL_RANGE_PREF_STRING, fullRange)
                 .putBoolean(ENABLE_HDR_PREF_STRING, enableHdr)
                 .putBoolean(ENABLE_HDR_HIGH_BRIGHTNESS_PREF_STRING, enableHdrHighBrightness)
+                .putBoolean(HDR_BRIGHTNESS_OVERRIDE_PREF_STRING, hdrBrightnessOverride)
+                .putInt(HDR_PEAK_BRIGHTNESS_NITS_PREF_STRING, hdrPeakBrightnessNits)
                 .putString(HDR_MODE_PREF_STRING, hdrMode.toString())
                 .putBoolean(ENABLE_PERF_OVERLAY_STRING, enablePerfOverlay)
+                .putBoolean(ENABLE_JITTER_MONITOR_STRING, enableJitterMonitor)
                 .putBoolean(PERF_OVERLAY_LOCKED_STRING, perfOverlayLocked)
                 .putInt(PERF_OVERLAY_BG_OPACITY_STRING, perfOverlayBgOpacity)
+                .putInt(GAME_MENU_OPACITY_PREF_STRING, gameMenuOpacity)
                 .putString(PERF_OVERLAY_ORIENTATION_STRING, getPerfOverlayOrientationPreferenceString(perfOverlayOrientation))
                 .putString(PERF_OVERLAY_POSITION_STRING, getPerfOverlayPositionPreferenceString(perfOverlayPosition))
                 .apply()
@@ -336,12 +466,15 @@ class PreferenceConfiguration {
         val copy = PreferenceConfiguration()
         copy.width = this.width
         copy.height = this.height
+        copy.isNativeResolution = this.isNativeResolution
+        copy.isCustomResolution = this.isCustomResolution
         copy.fps = this.fps
         copy.bitrate = this.bitrate
         copy.enableAdaptiveBitrate = this.enableAdaptiveBitrate
         copy.abrMode = this.abrMode
         copy.videoFormat = this.videoFormat
         copy.framePacing = this.framePacing
+        copy.enableHostCadencePreciseSync = this.enableHostCadencePreciseSync
         copy.stretchVideo = this.stretchVideo
         copy.enableSops = this.enableSops
         copy.unlockFps = this.unlockFps
@@ -349,10 +482,14 @@ class PreferenceConfiguration {
         copy.fullRange = this.fullRange
         copy.enableHdr = this.enableHdr
         copy.enableHdrHighBrightness = this.enableHdrHighBrightness
+        copy.hdrBrightnessOverride = this.hdrBrightnessOverride
+        copy.hdrPeakBrightnessNits = this.hdrPeakBrightnessNits
         copy.hdrMode = this.hdrMode
         copy.enablePerfOverlay = this.enablePerfOverlay
+        copy.enableJitterMonitor = this.enableJitterMonitor
         copy.perfOverlayLocked = this.perfOverlayLocked
         copy.perfOverlayBgOpacity = this.perfOverlayBgOpacity
+        copy.gameMenuOpacity = this.gameMenuOpacity
         copy.perfOverlayOrientation = this.perfOverlayOrientation
         copy.perfOverlayPosition = this.perfOverlayPosition
         copy.reverseResolution = this.reverseResolution
@@ -366,21 +503,37 @@ class PreferenceConfiguration {
         copy.outputBufferQueueLimit = this.outputBufferQueueLimit
         copy.micBitrate = this.micBitrate
         copy.micIconColor = this.micIconColor
+        copy.micMenuActionMode = this.micMenuActionMode
+        copy.micInitialState = this.micInitialState
+        copy.micVolumeProcessingEnabled = this.micVolumeProcessingEnabled
+        copy.micGainEnabled = this.micGainEnabled
+        copy.micGainDb = this.micGainDb
+        copy.micBalanceEnabled = this.micBalanceEnabled
+        copy.micBalanceTargetPercent = this.micBalanceTargetPercent
+        copy.micVoiceEnhancementEnabled = this.micVoiceEnhancementEnabled
         copy.enableEscMenu = this.enableEscMenu
         copy.escMenuKey = this.escMenuKey
         copy.enableStartKeyMenu = this.enableStartKeyMenu
         copy.enableNativeMousePointer = this.enableNativeMousePointer
         copy.forceMtkMaxOperatingRate = this.forceMtkMaxOperatingRate
+        copy.hevcLowLatencyMode = this.hevcLowLatencyMode
         copy.enableDoubleClickDrag = this.enableDoubleClickDrag
         copy.enableLocalCursorRendering = this.enableLocalCursorRendering
+        copy.optimizeHardwareTouchpad = this.optimizeHardwareTouchpad
         copy.gyroToRightStick = this.gyroToRightStick
         copy.gyroToMouse = this.gyroToMouse
-        copy.gyroFullDeflectionDps = this.gyroFullDeflectionDps
         copy.gyroSensitivityMultiplier = this.gyroSensitivityMultiplier
         copy.gyroActivationKeyCode = this.gyroActivationKeyCode
         copy.gyroInvertXAxis = this.gyroInvertXAxis
         copy.gyroInvertYAxis = this.gyroInvertYAxis
+        copy.enableAudioVibration = this.enableAudioVibration
+        copy.controllerMouseSpeedPercent = this.controllerMouseSpeedPercent
+        copy.controllerMouseDpadArrows = this.controllerMouseDpadArrows
+        copy.audioVibrationStrength = this.audioVibrationStrength
+        copy.audioVibrationMode = this.audioVibrationMode
+        copy.audioVibrationScene = this.audioVibrationScene
         copy.showBitrateCard = this.showBitrateCard
+        copy.showAudioHapticsCard = this.showAudioHapticsCard
         copy.showGyroCard = this.showGyroCard
         copy.showQuickKeyCard = this.showQuickKeyCard
         return copy
@@ -393,6 +546,7 @@ class PreferenceConfiguration {
         private const val ENABLE_DOUBLE_CLICK_DRAG_PREF_STRING = "pref_enable_double_click_drag"
         private const val DOUBLE_TAP_TIME_THRESHOLD_PREF_STRING = "seekbar_double_tap_time_threshold"
         private const val ENABLE_LOCAL_CURSOR_RENDERING_PREF_STRING = "pref_enable_local_cursor_rendering"
+        private const val OPTIMIZE_HARDWARE_TOUCHPAD_PREF_STRING = "checkbox_optimize_hardware_touchpad"
 
         private const val LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps"
         private const val LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround"
@@ -410,6 +564,10 @@ class PreferenceConfiguration {
         private const val SMALL_ICONS_PREF_STRING = "checkbox_small_icon_mode"
         private const val MULTI_CONTROLLER_PREF_STRING = "checkbox_multi_controller"
         private const val USB_DRIVER_PREF_SRING = "checkbox_usb_driver"
+        private const val DUALSENSE_WIRELESS_BRIDGE_PREF_STRING =
+            "checkbox_dualsense_wireless_bridge"
+        const val DUALSENSE_DIRECT_BLUETOOTH_PREF_STRING =
+            "checkbox_dualsense_direct_bluetooth"
         private const val VIDEO_FORMAT_PREF_STRING = "video_format"
         private const val ONSCREEN_KEYBOARD_PREF_STRING = "checkbox_show_onscreen_keyboard"
         private const val ONLY_L3_R3_PREF_STRING = "checkbox_only_show_L3R3"
@@ -418,20 +576,25 @@ class PreferenceConfiguration {
         private const val LEGACY_DISABLE_FRAME_DROP_PREF_STRING = "checkbox_disable_frame_drop"
         private const val ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr"
         private const val ENABLE_HDR_HIGH_BRIGHTNESS_PREF_STRING = "checkbox_enable_hdr_high_brightness"
-        private const val HDR_MODE_PREF_STRING = "list_hdr_mode" // 0=SDR, 1=HDR10, 2=HLG
+        private const val HDR_BRIGHTNESS_OVERRIDE_PREF_STRING = "checkbox_hdr_brightness_override"
+        private const val HDR_PEAK_BRIGHTNESS_NITS_PREF_STRING = "seekbar_hdr_peak_brightness_nits"
+        private const val HDR_MODE_PREF_STRING = "list_hdr_mode" // 0=SDR, 1=HDR10, 2=HLG, 3=HDR10+
         private const val ENABLE_PIP_PREF_STRING = "checkbox_enable_pip"
         private const val ENABLE_PERF_OVERLAY_STRING = "checkbox_enable_perf_overlay"
+        private const val ENABLE_JITTER_MONITOR_STRING = "checkbox_enable_jitter_monitor"
         private const val PERF_OVERLAY_LOCKED_STRING = "perf_overlay_locked"
         private const val PERF_OVERLAY_BG_OPACITY_STRING = "seekbar_perf_overlay_bg_opacity"
+        const val GAME_MENU_OPACITY_PREF_STRING = "seekbar_game_menu_opacity"
         private const val PERF_OVERLAY_ORIENTATION_STRING = "list_perf_overlay_orientation"
         private const val PERF_OVERLAY_POSITION_STRING = "list_perf_overlay_position"
         private const val BIND_ALL_USB_STRING = "checkbox_usb_bind_all"
-        private const val MOUSE_EMULATION_STRING = "checkbox_mouse_emulation"
         private const val ANALOG_SCROLLING_PREF_STRING = "analog_scrolling"
+        const val CONTROLLER_MOUSE_SPEED_PREF_STRING = "controller_mouse_speed_percent"
+        const val CONTROLLER_MOUSE_DPAD_PREF_STRING = "controller_mouse_dpad_behavior"
         private const val MOUSE_NAV_BUTTONS_STRING = "checkbox_mouse_nav_buttons"
-        private const val VIBRATE_OSC_PREF_STRING = "checkbox_vibrate_osc"
-        private const val VIBRATE_FALLBACK_PREF_STRING = "checkbox_vibrate_fallback"
-        private const val VIBRATE_FALLBACK_STRENGTH_PREF_STRING = "seekbar_vibrate_fallback_strength"
+        private const val LEGACY_VIBRATE_FALLBACK_PREF_STRING = "checkbox_vibrate_fallback"
+        const val GAME_RUMBLE_MODE_PREF_STRING = "list_game_rumble_mode"
+        private const val DEVICE_RUMBLE_STRENGTH_PREF_STRING = "seekbar_vibrate_fallback_strength"
         private const val AUDIO_VIBRATION_ENABLE_PREF_STRING = "checkbox_audio_vibration"
         private const val CLIPBOARD_SYNC_TEXT_PREF_STRING = "checkbox_clipboard_sync_text"
         private const val CLIPBOARD_SYNC_IMAGE_PREF_STRING = "checkbox_clipboard_sync_image"
@@ -444,10 +607,12 @@ class PreferenceConfiguration {
         private const val LOCK_SCREEN_AFTER_DISCONNECT_PREF_STRING = "checkbox_lock_screen_after_disconnect"
         private const val SWAP_QUIT_AND_DISCONNECT_PERF_STRING = "checkbox_swap_quit_and_disconnect"
         private const val SCREEN_COMBINATION_MODE_PREF_STRING = "list_screen_combination_mode"
-        private const val FRAME_PACING_PREF_STRING = "frame_pacing"
+        const val FRAME_PACING_PREF_STRING = "frame_pacing"
+        const val ENABLE_HOST_CADENCE_PRECISE_SYNC_STRING = "checkbox_enable_host_cadence_precise_sync"
         private const val ABSOLUTE_MOUSE_MODE_PREF_STRING = "checkbox_absolute_mouse_mode"
         // Card visibility preferences
         private const val SHOW_BITRATE_CARD_PREF_STRING = "checkbox_show_bitrate_card"
+        private const val SHOW_AUDIO_HAPTICS_CARD_PREF_STRING = "checkbox_show_audio_haptics_card"
         private const val SHOW_GYRO_CARD_PREF_STRING = "checkbox_show_gyro_card"
         @Suppress("ConstPropertyName")
         private const val SHOW_QuickKeyCard = "checkbox_show_QuickKeyCard"
@@ -459,11 +624,17 @@ class PreferenceConfiguration {
         private const val ENABLE_AUDIO_FX_PREF_STRING = "checkbox_enable_audiofx"
         private const val ENABLE_SPATIALIZER_PREF_STRING = "checkbox_enable_spatializer"
         private const val ENABLE_AUDIO_PASSTHROUGH_PREF_STRING = "checkbox_enable_audio_passthrough"
+        private const val AC3_IEC61937_PREF_STRING = "checkbox_ac3_iec61937"
         private const val DEFAULT_ENABLE_AUDIO_PASSTHROUGH = false
         private const val FORCE_MTK_MAX_OPERATING_RATE_PREF_STRING = "checkbox_force_mtk_max_operating_rate"
         private const val DEFAULT_FORCE_MTK_MAX_OPERATING_RATE = false
+        const val HEVC_LOW_LATENCY_AUTO = 0
+        const val HEVC_LOW_LATENCY_ON = 1
+        const val HEVC_LOW_LATENCY_OFF = 2
+        private const val HEVC_LOW_LATENCY_MODE_PREF_STRING = "list_hevc_low_latency_mode"
+        private const val DEFAULT_HEVC_LOW_LATENCY_MODE = "auto"
         private const val REDUCE_REFRESH_RATE_PREF_STRING = "checkbox_reduce_refresh_rate"
-        private const val FULL_RANGE_PREF_STRING = "checkbox_full_range"
+        internal const val FULL_RANGE_PREF_STRING = "checkbox_full_range"
         private const val GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING = "checkbox_gamepad_touchpad_as_mouse"
         private const val GAMEPAD_MOTION_SENSORS_PREF_STRING = "checkbox_gamepad_motion_sensors"
         private const val GAMEPAD_MOTION_FALLBACK_PREF_STRING = "checkbox_gamepad_motion_fallback"
@@ -473,11 +644,24 @@ class PreferenceConfiguration {
         private const val GYRO_INVERT_X_AXIS_PREF_STRING = "gyro_invert_x_axis"
         private const val GYRO_INVERT_Y_AXIS_PREF_STRING = "gyro_invert_y_axis"
         private const val GYRO_ACTIVATION_KEY_CODE_PREF_STRING = "gyro_activation_key_code"
+        private const val GYRO_TO_RIGHT_STICK_PREF_STRING = "gyro_to_right_stick"
+        private const val GYRO_TO_MOUSE_PREF_STRING = "gyro_to_mouse"
 
         // 麦克风设置
         private const val ENABLE_MIC_PREF_STRING = "checkbox_enable_mic"
         private const val MIC_BITRATE_PREF_STRING = "seekbar_mic_bitrate_kbps"
         private const val MIC_ICON_COLOR_PREF_STRING = "list_mic_icon_color"
+        const val MIC_MENU_ACTION_MODE_PREF_STRING = "list_mic_menu_action_mode"
+        const val MIC_INITIAL_STATE_PREF_STRING = "list_mic_initial_state"
+
+        // 麦克风音量增益及其平衡设置
+        const val MIC_VOLUME_PROCESSING_MODE_PREF_STRING = "list_mic_volume_processing_mode"
+        internal const val MIC_VOLUME_PROCESSING_PREF_STRING = "checkbox_mic_volume_processing"
+        internal const val MIC_GAIN_ENABLED_PREF_STRING = "checkbox_mic_gain"
+        private const val MIC_GAIN_DB_PREF_STRING = "seekbar_mic_gain_db"
+        internal const val MIC_BALANCE_ENABLED_PREF_STRING = "checkbox_mic_balance"
+        private const val MIC_BALANCE_TARGET_PERCENT_PREF_STRING = "seekbar_mic_balance_target"
+        private const val MIC_VOICE_ENHANCEMENT_PREF_STRING = "checkbox_mic_voice_enhancement"
 
         private const val ENABLE_ESC_MENU_PREF_STRING = "checkbox_enable_esc_menu"
         private const val ESC_MENU_KEY_PREF_STRING = "list_esc_menu_key"
@@ -506,6 +690,7 @@ class PreferenceConfiguration {
         private const val ONSCREEN_CONTROLLER_PREF_STRING = "checkbox_show_onscreen_controls"
 
         private const val REVERSE_RESOLUTION_PREF_STRING = "checkbox_reverse_resolution"
+        private const val USE_EXTERNAL_DISPLAY_PREF_STRING = "use_external_display"
         private const val ROTABLE_SCREEN_PREF_STRING = "checkbox_rotable_screen"
 
         // 画面位置常量
@@ -516,6 +701,8 @@ class PreferenceConfiguration {
         // ---- Public pref key constants ----
         const val RESOLUTION_PREF_STRING = "list_resolution"
         const val TOUCHSCREEN_TRACKPAD_PREF_STRING = "checkbox_touchscreen_trackpad"
+        const val TOUCH_KEYBOARD_AUTO_INVOKE_PREF_STRING = "checkbox_touch_keyboard_auto_invoke"
+        const val SCREEN_DS5_TOUCHPAD_PREF_STRING = "checkbox_screen_ds5_touchpad"
         const val ENABLE_NATIVE_MOUSE_POINTER_PREF_STRING = "checkbox_enable_native_mouse_pointer"
         const val NATIVE_MOUSE_MODE_PRESET_PREF_STRING = "list_native_mouse_mode_preset"
         const val ENABLE_ENHANCED_TOUCH_PREF_STRING = "checkbox_enable_enhanced_touch"
@@ -536,6 +723,7 @@ class PreferenceConfiguration {
         const val AUDIO_PASSTHROUGH_BUFFER_PREF_STRING = "list_audio_passthrough_buffer"
         const val DEFAULT_AUDIO_PASSTHROUGH_BUFFER = "normal"
         const val UNLOCK_FPS_STRING = "checkbox_unlock_fps"
+        const val SHOW_LOW_RESOLUTION_PRESETS_PREF_STRING = "checkbox_show_low_resolution_presets"
         const val CROWN_CONFIG_MANAGEMENT_STRING = "crown_config_management"
 
         // ---- Default values (package-private promoted to public) ----
@@ -552,6 +740,8 @@ class PreferenceConfiguration {
         const val DEFAULT_LANGUAGE = "default"
         private const val DEFAULT_MULTI_CONTROLLER = true
         private const val DEFAULT_USB_DRIVER = true
+        private const val DEFAULT_DUALSENSE_WIRELESS_BRIDGE = false
+        private const val DEFAULT_DUALSENSE_DIRECT_BLUETOOTH = false
 
         private fun isPcmOutputSupported(channelMask: Int): Boolean {
             return try {
@@ -608,37 +798,37 @@ class PreferenceConfiguration {
         private const val HALF_HEIGHT_OSC_PORTRAIT_DEFAULT = true
         private const val DEFAULT_ENABLE_HDR = false
         private const val DEFAULT_ENABLE_HDR_HIGH_BRIGHTNESS = false
-        private const val DEFAULT_HDR_MODE = 1 // 默认 HDR10/PQ 模式 (0=禁用自动HDR切换, 1=HDR10, 2=HLG)
+        private const val DEFAULT_HDR_BRIGHTNESS_OVERRIDE = false
+        private const val DEFAULT_HDR_PEAK_BRIGHTNESS_NITS = 1000
+        private const val DEFAULT_HDR_MODE = 1 // 默认 HDR10/PQ 模式 (0=SDR, 1=HDR10, 2=HLG, 3=HDR10+)
         private const val DEFAULT_ENABLE_PIP = false
         private const val DEFAULT_ENABLE_PERF_OVERLAY = false
+        private const val DEFAULT_ENABLE_JITTER_MONITOR = false
         private const val DEFAULT_PERF_OVERLAY_LOCKED = false
-        private const val DEFAULT_PERF_OVERLAY_BG_OPACITY = 53
+        private const val DEFAULT_PERF_OVERLAY_BG_OPACITY = 40
+        const val DEFAULT_GAME_MENU_OPACITY = 90
+        const val MIN_GAME_MENU_OPACITY = 40
+        const val MAX_GAME_MENU_OPACITY = 100
         private const val DEFAULT_PERF_OVERLAY_ORIENTATION = "horizontal"
         private const val DEFAULT_PERF_OVERLAY_POSITION = "top"
         private const val DEFAULT_BIND_ALL_USB = false
-        private const val DEFAULT_MOUSE_EMULATION = true
         private const val DEFAULT_ANALOG_STICK_FOR_SCROLLING = "right"
         private const val DEFAULT_MOUSE_NAV_BUTTONS = false
-        private const val DEFAULT_NATIVE_MOUSE_MODE_PRESET = "classic"
         private const val DEFAULT_UNLOCK_FPS = false
-        private const val DEFAULT_VIBRATE_OSC = true
-        private const val DEFAULT_VIBRATE_FALLBACK = false
-        private const val DEFAULT_VIBRATE_FALLBACK_STRENGTH = 100
+        private const val DEFAULT_DEVICE_RUMBLE_STRENGTH = 100
         private const val DEFAULT_AUDIO_VIBRATION = false
         private const val DEFAULT_CLIPBOARD_SYNC_TEXT = false
         private const val DEFAULT_CLIPBOARD_SYNC_IMAGE = false
-        private const val DEFAULT_AUDIO_VIBRATION_STRENGTH = 80
-        private const val DEFAULT_AUDIO_VIBRATION_MODE = "auto"
-        private const val DEFAULT_AUDIO_VIBRATION_SCENE = 0 // Game/Movie
+        const val DEFAULT_AUDIO_VIBRATION_STRENGTH = 80
+        const val DEFAULT_AUDIO_VIBRATION_MODE = "auto"
+        const val DEFAULT_AUDIO_VIBRATION_SCENE = 0 // Game/Movie
         private const val DEFAULT_FLIP_FACE_BUTTONS = false
-        private const val DEFAULT_TOUCHSCREEN_TRACKPAD = true
         private const val DEFAULT_AUDIO_CONFIG = "2" // Stereo
         private const val DEFAULT_LATENCY_TOAST = false
         private const val DEFAULT_ENABLE_STUN = false
         private const val DEFAULT_SCREEN_COMBINATION_MODE = "-1"
-        private const val DEFAULT_FRAME_PACING = "latency"
+        const val DEFAULT_FRAME_PACING = "precise-sync"
         private const val DEFAULT_ABSOLUTE_MOUSE_MODE = false
-        private const val DEFAULT_ENABLE_NATIVE_MOUSE_POINTER = false
         private const val DEFAULT_ENABLE_AUDIO_FX = false
         private const val DEFAULT_ENABLE_SPATIALIZER = false
         private const val DEFAULT_REDUCE_REFRESH_RATE = false
@@ -657,6 +847,15 @@ class PreferenceConfiguration {
         private const val DEFAULT_ENABLE_MIC = false
         private const val DEFAULT_MIC_BITRATE = 96 // 默认128 kbps
         private const val DEFAULT_MIC_ICON_COLOR = "solid_white" // 默认白
+        const val MIC_MENU_ACTION_SHOW_BUTTON = "show_button"
+        const val MIC_MENU_ACTION_TOGGLE_MIC = "toggle_microphone"
+        private const val DEFAULT_MIC_MENU_ACTION_MODE = MIC_MENU_ACTION_SHOW_BUTTON
+        private val DEFAULT_MIC_INITIAL_STATE = MicrophoneInitialState.OFF.preferenceValue
+
+        // 麦克风音量增益及其平衡默认值
+        private const val DEFAULT_MIC_GAIN_DB = 0
+        private const val DEFAULT_MIC_BALANCE_TARGET_PERCENT = 50
+        private const val DEFAULT_MIC_VOICE_ENHANCEMENT = true
         private const val DEFAULT_ENABLE_ESC_MENU = true // 默认启用ESC菜单
         private val DEFAULT_ESC_MENU_KEY = KeyEvent.KEYCODE_ESCAPE
         private const val DEFAULT_ENABLE_START_KEY_MENU = true // 默认启用长按start键菜单
@@ -682,7 +881,8 @@ class PreferenceConfiguration {
 
         private const val DEFAULT_ENABLE_DOUBLE_CLICK_DRAG = false
         private const val DEFAULT_DOUBLE_TAP_TIME_THRESHOLD = 125 // 默认125ms
-        private const val DEFAULT_ENABLE_LOCAL_CURSOR_RENDERING = true
+        private const val DEFAULT_ENABLE_LOCAL_CURSOR_RENDERING = false
+        private const val DEFAULT_OPTIMIZE_HARDWARE_TOUCHPAD = false
 
         private const val DEFAULT_REVERSE_RESOLUTION = false
         private const val DEFAULT_ROTABLE_SCREEN = false
@@ -717,8 +917,19 @@ class PreferenceConfiguration {
             "640x360", "854x480", "1280x720", "1920x1080", "2560x1440", "3840x2160", "Native"
         )
 
+        fun isLowResolutionPreset(resolution: String?): Boolean {
+            return when (resolution) {
+                RES_360P, RES_480P, "360x640", "480x854" -> true
+                else -> false
+            }
+        }
+
         // ---- Public static methods ----
 
+        /**
+         * Legacy dimension-only fallback for callers that do not have the selected preference.
+         * Streaming code should use [usesNativeDisplayMode] instead.
+         */
         fun isNativeResolution(width: Int, height: Int): Boolean {
             val resolutionSet = RESOLUTIONS.toHashSet()
             return !resolutionSet.contains("${width}x${height}")
@@ -975,6 +1186,8 @@ class PreferenceConfiguration {
                 .remove(VIDEO_FORMAT_PREF_STRING)
                 .remove(ENABLE_HDR_PREF_STRING)
                 .remove(ENABLE_HDR_HIGH_BRIGHTNESS_PREF_STRING)
+                .remove(HDR_BRIGHTNESS_OVERRIDE_PREF_STRING)
+                .remove(HDR_PEAK_BRIGHTNESS_NITS_PREF_STRING)
                 .remove(UNLOCK_FPS_STRING)
                 .remove(FULL_RANGE_PREF_STRING)
                 .apply()
@@ -996,6 +1209,24 @@ class PreferenceConfiguration {
         @Suppress("DEPRECATION")
         @JvmStatic
         fun readPreferences(context: Context): PreferenceConfiguration {
+            return readPreferences(context, null)
+        }
+
+        @JvmStatic
+        fun isExternalDisplayEnabled(context: Context): Boolean {
+            return PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(USE_EXTERNAL_DISPLAY_PREF_STRING, false)
+        }
+
+        /**
+         * Reads preferences using [nativeDisplay] when Native resolution is selected.
+         *
+         * The one-argument overload remains the default for settings and background callers.
+         * Streaming code should pass the display selected for the current session.
+         */
+        @Suppress("DEPRECATION")
+        @JvmStatic
+        fun readPreferences(context: Context, nativeDisplay: Display?): PreferenceConfiguration {
             val prefs = PreferenceManager.getDefaultSharedPreferences(context)
             val config = PreferenceConfiguration()
 
@@ -1009,12 +1240,30 @@ class PreferenceConfiguration {
                 }
             }
 
+            // The old Boolean meant "fall back to the phone when needed". Smart mode is the
+            // closest safe upgrade for enabled users because it never silences a capable gamepad.
+            if (!prefs.contains(GAME_RUMBLE_MODE_PREF_STRING)) {
+                val migratedMode = GameRumbleMode.fromLegacyFallback(
+                    prefs.getBoolean(LEGACY_VIBRATE_FALLBACK_PREF_STRING, false)
+                )
+                prefs.edit()
+                    .remove(LEGACY_VIBRATE_FALLBACK_PREF_STRING)
+                    .putString(GAME_RUMBLE_MODE_PREF_STRING, migratedMode.preferenceValue)
+                    .apply()
+            } else if (prefs.contains(LEGACY_VIBRATE_FALLBACK_PREF_STRING)) {
+                prefs.edit().remove(LEGACY_VIBRATE_FALLBACK_PREF_STRING).apply()
+            }
+
             val resStr = prefs.getString(RESOLUTION_PREF_STRING, DEFAULT_RESOLUTION) ?: DEFAULT_RESOLUTION
+            config.isNativeResolution = resStr == RES_NATIVE
+            config.isCustomResolution =
+                resStr != RES_NATIVE && !RESOLUTIONS.contains(resStr)
 
             // 添加Native分辨率支持
             if (resStr == RES_NATIVE) {
                 // 获取设备原生分辨率
-                val display = (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+                val display = nativeDisplay
+                    ?: (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
                 val size = Point()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
                     display.getRealSize(size) // 需要API 17+
@@ -1078,13 +1327,13 @@ class PreferenceConfiguration {
             }
 
             // Enhance touch settings
-            config.enableEnhancedTouch = prefs.getBoolean(ENABLE_ENHANCED_TOUCH_PREF_STRING, false)
             config.enhancedTouchOnWhichSide = prefs.getBoolean(ENHANCED_TOUCH_ON_RIGHT_PREF_STRING, true) // by default, enhanced touch zone is on the right side.
             config.enhanceTouchZoneDivider = prefs.getInt(ENHANCED_TOUCH_ZONE_DIVIDER_PREF_STRING, 50) // decides where to divide native touch zone & enhance touch zone
             config.pointerVelocityFactor = prefs.getInt(POINTER_VELOCITY_FACTOR_PREF_STRING, 100).toFloat() // set pointer velocity faster or slower
 
             val enableAudioPassthrough = prefs.getBoolean(ENABLE_AUDIO_PASSTHROUGH_PREF_STRING, DEFAULT_ENABLE_AUDIO_PASSTHROUGH)
             config.enableAudioPassthrough = enableAudioPassthrough
+            config.useAc3Iec61937 = prefs.getBoolean(AC3_IEC61937_PREF_STRING, false)
 
             val audioConfig = prefs.getString(AUDIO_CONFIG_PREF_STRING, DEFAULT_AUDIO_CONFIG) ?: DEFAULT_AUDIO_CONFIG
             config.audioConfiguration = when (audioConfig) {
@@ -1128,8 +1377,11 @@ class PreferenceConfiguration {
 
             config.videoFormat = getVideoFormatValue(context)
             config.framePacing = getFramePacingValue(context)
+            config.enableHostCadencePreciseSync = prefs.getBoolean(ENABLE_HOST_CADENCE_PRECISE_SYNC_STRING, true)
 
             config.analogStickForScrolling = getAnalogStickForScrollingValue(context)
+            config.controllerMouseSpeedPercent = prefs.getInt(CONTROLLER_MOUSE_SPEED_PREF_STRING, 100).coerceIn(50, 200)
+            config.controllerMouseDpadArrows = prefs.getString(CONTROLLER_MOUSE_DPAD_PREF_STRING, "scroll") == "arrows"
 
             config.deadzonePercentage = prefs.getInt(DEADZONE_PREF_STRING, DEFAULT_DEADZONE)
 
@@ -1142,6 +1394,7 @@ class PreferenceConfiguration {
             config.enableDoubleClickDrag = prefs.getBoolean(ENABLE_DOUBLE_CLICK_DRAG_PREF_STRING, DEFAULT_ENABLE_DOUBLE_CLICK_DRAG)
             config.doubleTapTimeThreshold = prefs.getInt(DOUBLE_TAP_TIME_THRESHOLD_PREF_STRING, DEFAULT_DOUBLE_TAP_TIME_THRESHOLD)
             config.enableLocalCursorRendering = prefs.getBoolean(ENABLE_LOCAL_CURSOR_RENDERING_PREF_STRING, DEFAULT_ENABLE_LOCAL_CURSOR_RENDERING)
+            config.optimizeHardwareTouchpad = prefs.getBoolean(OPTIMIZE_HARDWARE_TOUCHPAD_PREF_STRING, DEFAULT_OPTIMIZE_HARDWARE_TOUCHPAD)
             config.enableCustomKeyMap = prefs.getBoolean("checkbox_special_key_map", false)
             config.fixMouseMiddle = prefs.getBoolean("checkbox_mouse_middle", false)
             config.fixMouseWheel = prefs.getBoolean("checkbox_mouse_wheel", false)
@@ -1150,15 +1403,30 @@ class PreferenceConfiguration {
             config.playHostAudio = prefs.getBoolean(HOST_AUDIO_PREF_STRING, DEFAULT_HOST_AUDIO)
             config.smallIconMode = prefs.getBoolean(SMALL_ICONS_PREF_STRING, getDefaultSmallMode(context))
             config.multiController = prefs.getBoolean(MULTI_CONTROLLER_PREF_STRING, DEFAULT_MULTI_CONTROLLER)
+            config.combineJoyCons = prefs.getBoolean("checkbox_combine_joycons", true)
             config.usbDriver = prefs.getBoolean(USB_DRIVER_PREF_SRING, DEFAULT_USB_DRIVER)
+            config.allowExperimentalHaptics = prefs.getBoolean("checkbox_experimental_haptic_protocols", false)
+            config.hostGamepadSelection = HostGamepadSelection.fromPreference(
+                prefs.getString("list_host_gamepad_selection", "automatic"))
+            config.dualSenseWirelessBridge = prefs.getBoolean(
+                DUALSENSE_WIRELESS_BRIDGE_PREF_STRING,
+                DEFAULT_DUALSENSE_WIRELESS_BRIDGE
+            )
+            config.dualSenseDirectBluetooth = prefs.getBoolean(
+                DUALSENSE_DIRECT_BLUETOOTH_PREF_STRING,
+                DEFAULT_DUALSENSE_DIRECT_BLUETOOTH
+            )
             config.onscreenController = prefs.getBoolean(ONSCREEN_CONTROLLER_PREF_STRING, ONSCREEN_CONTROLLER_DEFAULT)
             config.enableCrownFeatures = prefs.getBoolean(ONSCREEN_KEYBOARD_PREF_STRING, ONSCREEN_KEYBOARD_DEFAULT)
             config.onscreenKeyboard = config.enableCrownFeatures
+            config.oscLayout = prefs.getString("list_osc_layout", "xbox") ?: "xbox"
             config.onlyL3R3 = prefs.getBoolean(ONLY_L3_R3_PREF_STRING, ONLY_L3_R3_DEFAULT)
             config.showGuideButton = prefs.getBoolean(SHOW_GUIDE_BUTTON_PREF_STRING, SHOW_GUIDE_BUTTON_DEFAULT)
             config.halfHeightOscPortrait = prefs.getBoolean(HALF_HEIGHT_OSC_PORTRAIT_PREF_STRING, HALF_HEIGHT_OSC_PORTRAIT_DEFAULT)
             config.enableHdr = prefs.getBoolean(ENABLE_HDR_PREF_STRING, DEFAULT_ENABLE_HDR) && !isShieldAtvFirmwareWithBrokenHdr()
             config.enableHdrHighBrightness = prefs.getBoolean(ENABLE_HDR_HIGH_BRIGHTNESS_PREF_STRING, DEFAULT_ENABLE_HDR_HIGH_BRIGHTNESS)
+            config.hdrBrightnessOverride = prefs.getBoolean(HDR_BRIGHTNESS_OVERRIDE_PREF_STRING, DEFAULT_HDR_BRIGHTNESS_OVERRIDE)
+            config.hdrPeakBrightnessNits = prefs.getInt(HDR_PEAK_BRIGHTNESS_NITS_PREF_STRING, DEFAULT_HDR_PEAK_BRIGHTNESS_NITS).coerceIn(300, 4000)
             // HDR mode is stored as a String from ListPreference, default to HDR10 (1)
             config.hdrMode = try {
                 (prefs.getString(HDR_MODE_PREF_STRING, DEFAULT_HDR_MODE.toString()) ?: DEFAULT_HDR_MODE.toString()).toInt()
@@ -1167,8 +1435,13 @@ class PreferenceConfiguration {
             }
             config.enablePip = prefs.getBoolean(ENABLE_PIP_PREF_STRING, DEFAULT_ENABLE_PIP)
             config.enablePerfOverlay = prefs.getBoolean(ENABLE_PERF_OVERLAY_STRING, DEFAULT_ENABLE_PERF_OVERLAY)
+            config.enableJitterMonitor = prefs.getBoolean(ENABLE_JITTER_MONITOR_STRING, DEFAULT_ENABLE_JITTER_MONITOR)
             config.perfOverlayLocked = prefs.getBoolean(PERF_OVERLAY_LOCKED_STRING, DEFAULT_PERF_OVERLAY_LOCKED)
             config.perfOverlayBgOpacity = prefs.getInt(PERF_OVERLAY_BG_OPACITY_STRING, DEFAULT_PERF_OVERLAY_BG_OPACITY).coerceIn(0, 100)
+            config.gameMenuOpacity = prefs.getInt(
+                GAME_MENU_OPACITY_PREF_STRING,
+                DEFAULT_GAME_MENU_OPACITY
+            ).coerceIn(MIN_GAME_MENU_OPACITY, MAX_GAME_MENU_OPACITY)
 
             // 读取性能覆盖层方向和位置设置
             val perfOverlayOrientationStr = prefs.getString(PERF_OVERLAY_ORIENTATION_STRING, DEFAULT_PERF_OVERLAY_ORIENTATION)
@@ -1189,12 +1462,15 @@ class PreferenceConfiguration {
             }
 
             config.bindAllUsb = prefs.getBoolean(BIND_ALL_USB_STRING, DEFAULT_BIND_ALL_USB)
-            config.mouseEmulation = prefs.getBoolean(MOUSE_EMULATION_STRING, DEFAULT_MOUSE_EMULATION)
             config.mouseNavButtons = prefs.getBoolean(MOUSE_NAV_BUTTONS_STRING, DEFAULT_MOUSE_NAV_BUTTONS)
             config.unlockFps = prefs.getBoolean(UNLOCK_FPS_STRING, DEFAULT_UNLOCK_FPS)
-            config.vibrateOsc = prefs.getBoolean(VIBRATE_OSC_PREF_STRING, DEFAULT_VIBRATE_OSC)
-            config.vibrateFallbackToDevice = prefs.getBoolean(VIBRATE_FALLBACK_PREF_STRING, DEFAULT_VIBRATE_FALLBACK)
-            config.vibrateFallbackToDeviceStrength = prefs.getInt(VIBRATE_FALLBACK_STRENGTH_PREF_STRING, DEFAULT_VIBRATE_FALLBACK_STRENGTH)
+            config.gameRumbleMode = GameRumbleMode.fromPreferenceValue(
+                prefs.getString(GAME_RUMBLE_MODE_PREF_STRING, GameRumbleMode.CONTROLLER.preferenceValue)
+            )
+            config.deviceRumbleStrength = prefs.getInt(
+                DEVICE_RUMBLE_STRENGTH_PREF_STRING,
+                DEFAULT_DEVICE_RUMBLE_STRENGTH
+            )
             config.enableAudioVibration = prefs.getBoolean(AUDIO_VIBRATION_ENABLE_PREF_STRING, DEFAULT_AUDIO_VIBRATION)
             config.audioVibrationStrength = prefs.getInt(AUDIO_VIBRATION_STRENGTH_PREF_STRING, DEFAULT_AUDIO_VIBRATION_STRENGTH)
             config.enableClipboardSyncText = prefs.getBoolean(CLIPBOARD_SYNC_TEXT_PREF_STRING, DEFAULT_CLIPBOARD_SYNC_TEXT)
@@ -1202,7 +1478,19 @@ class PreferenceConfiguration {
             config.audioVibrationMode = prefs.getString(AUDIO_VIBRATION_MODE_PREF_STRING, DEFAULT_AUDIO_VIBRATION_MODE) ?: DEFAULT_AUDIO_VIBRATION_MODE
             config.audioVibrationScene = (prefs.getString(AUDIO_VIBRATION_SCENE_PREF_STRING, DEFAULT_AUDIO_VIBRATION_SCENE.toString()) ?: DEFAULT_AUDIO_VIBRATION_SCENE.toString()).toInt()
             config.flipFaceButtons = prefs.getBoolean(FLIP_FACE_BUTTONS_PREF_STRING, DEFAULT_FLIP_FACE_BUTTONS)
-            config.touchscreenTrackpad = prefs.getBoolean(TOUCHSCREEN_TRACKPAD_PREF_STRING, DEFAULT_TOUCHSCREEN_TRACKPAD)
+            val hasTouchscreen = context.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+            val touchModeState = TouchModePreferencePolicy.resolve(
+                hasTouchscreen = hasTouchscreen,
+                enhancedTouch = prefs.getBooleanOrNull(ENABLE_ENHANCED_TOUCH_PREF_STRING),
+                touchscreenTrackpad = prefs.getBooleanOrNull(TOUCHSCREEN_TRACKPAD_PREF_STRING),
+                nativeMousePointer = prefs.getBooleanOrNull(ENABLE_NATIVE_MOUSE_POINTER_PREF_STRING),
+                screenDs5Touchpad = prefs.getBooleanOrNull(SCREEN_DS5_TOUCHPAD_PREF_STRING)
+            )
+            config.enableEnhancedTouch = touchModeState.enhancedTouch
+            config.touchscreenTrackpad = touchModeState.touchscreenTrackpad
+            config.enableNativeMousePointer = touchModeState.nativeMousePointer
+            config.screenDs5Touchpad = touchModeState.screenDs5Touchpad
+            config.touchKeyboardAutoInvoke = prefs.getBoolean(TOUCH_KEYBOARD_AUTO_INVOKE_PREF_STRING, true)
             config.enableLatencyToast = prefs.getBoolean(LATENCY_TOAST_PREF_STRING, DEFAULT_LATENCY_TOAST)
             config.enableStun = prefs.getBoolean(ENABLE_STUN_PREF_STRING, DEFAULT_ENABLE_STUN)
 
@@ -1213,25 +1501,10 @@ class PreferenceConfiguration {
                 -1
             }
 
-            // VDD screen combination mode defaults to -1 (use host config)
-            // This is set dynamically from AppView based on display selection
-            config.vddScreenCombinationMode = -1
-
             config.lockScreenAfterDisconnect = prefs.getBoolean(LOCK_SCREEN_AFTER_DISCONNECT_PREF_STRING, DEFAULT_LATENCY_TOAST)
             config.swapQuitAndDisconnect = prefs.getBoolean(SWAP_QUIT_AND_DISCONNECT_PERF_STRING, DEFAULT_LATENCY_TOAST)
             config.absoluteMouseMode = prefs.getBoolean(ABSOLUTE_MOUSE_MODE_PREF_STRING, DEFAULT_ABSOLUTE_MOUSE_MODE)
 
-            // 对于没有触摸屏的设备，默认启用本地鼠标指针
-            val hasTouchscreen = context.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
-            val defaultNativeMouse = if (hasTouchscreen) DEFAULT_ENABLE_NATIVE_MOUSE_POINTER else true
-            config.enableNativeMousePointer = prefs.getBoolean(ENABLE_NATIVE_MOUSE_POINTER_PREF_STRING, defaultNativeMouse)
-
-            // 如果没有触摸屏，强制设置为本地鼠标指针模式
-            if (!hasTouchscreen) {
-                config.enableNativeMousePointer = true
-                config.enableEnhancedTouch = false
-                config.touchscreenTrackpad = false
-            }
             config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX)
             config.enableSpatializer = prefs.getBoolean(ENABLE_SPATIALIZER_PREF_STRING, DEFAULT_ENABLE_SPATIALIZER)
             config.enableAudioPassthrough = enableAudioPassthrough
@@ -1239,6 +1512,13 @@ class PreferenceConfiguration {
                 FORCE_MTK_MAX_OPERATING_RATE_PREF_STRING,
                 DEFAULT_FORCE_MTK_MAX_OPERATING_RATE
             )
+            config.hevcLowLatencyMode = when (
+                prefs.getString(HEVC_LOW_LATENCY_MODE_PREF_STRING, DEFAULT_HEVC_LOW_LATENCY_MODE)
+            ) {
+                "on" -> HEVC_LOW_LATENCY_ON
+                "off" -> HEVC_LOW_LATENCY_OFF
+                else -> HEVC_LOW_LATENCY_AUTO
+            }
             config.reduceRefreshRate = prefs.getBoolean(REDUCE_REFRESH_RATE_PREF_STRING, DEFAULT_REDUCE_REFRESH_RATE)
             config.fullRange = prefs.getBoolean(FULL_RANGE_PREF_STRING, DEFAULT_FULL_RANGE)
             config.gamepadTouchpadAsMouse = prefs.getBoolean(GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING, DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE)
@@ -1251,9 +1531,17 @@ class PreferenceConfiguration {
             config.gyroInvertXAxis = prefs.getBoolean(GYRO_INVERT_X_AXIS_PREF_STRING, DEFAULT_GYRO_INVERT_X_AXIS)
             config.gyroInvertYAxis = prefs.getBoolean(GYRO_INVERT_Y_AXIS_PREF_STRING, DEFAULT_GYRO_INVERT_Y_AXIS)
             config.gyroActivationKeyCode = prefs.getInt(GYRO_ACTIVATION_KEY_CODE_PREF_STRING, DEFAULT_GYRO_ACTIVATION_KEY_CODE)
+            // Mouse mode wins if both flags somehow ended up persisted together
+            config.gyroToMouse = prefs.getBoolean(GYRO_TO_MOUSE_PREF_STRING, false)
+            config.gyroToRightStick = !config.gyroToMouse &&
+                prefs.getBoolean(GYRO_TO_RIGHT_STICK_PREF_STRING, false)
 
             // Cards visibility (defaults to true)
             config.showBitrateCard = prefs.getBoolean(SHOW_BITRATE_CARD_PREF_STRING, true)
+            config.showAudioHapticsCard = prefs.getBoolean(
+                SHOW_AUDIO_HAPTICS_CARD_PREF_STRING,
+                config.enableAudioVibration
+            )
             config.showGyroCard = prefs.getBoolean(SHOW_GYRO_CARD_PREF_STRING, true)
             // 横屏时快捷卡片默认不开启
             val defaultQuickKeyCard = config.width <= config.height
@@ -1263,6 +1551,26 @@ class PreferenceConfiguration {
             config.enableMic = prefs.getBoolean(ENABLE_MIC_PREF_STRING, DEFAULT_ENABLE_MIC)
             config.micBitrate = prefs.getInt(MIC_BITRATE_PREF_STRING, DEFAULT_MIC_BITRATE)
             config.micIconColor = prefs.getString(MIC_ICON_COLOR_PREF_STRING, DEFAULT_MIC_ICON_COLOR) ?: DEFAULT_MIC_ICON_COLOR
+            config.micMenuActionMode = prefs.getString(MIC_MENU_ACTION_MODE_PREF_STRING, DEFAULT_MIC_MENU_ACTION_MODE) ?: DEFAULT_MIC_MENU_ACTION_MODE
+            config.micInitialState = MicrophoneInitialState.fromPreferenceValue(
+                prefs.getString(MIC_INITIAL_STATE_PREF_STRING, DEFAULT_MIC_INITIAL_STATE)
+            ).preferenceValue
+
+            // Legacy flags remain authoritative so importing an old backup can override a
+            // previously stored mode value. The settings UI keeps both representations synced.
+            val micProcessingMode = MicVolumeProcessingPolicy.resolveMode(
+                storedMode = prefs.getString(MIC_VOLUME_PROCESSING_MODE_PREF_STRING, null),
+                processing = prefs.getBooleanOrNull(MIC_VOLUME_PROCESSING_PREF_STRING),
+                gain = prefs.getBooleanOrNull(MIC_GAIN_ENABLED_PREF_STRING),
+                balance = prefs.getBooleanOrNull(MIC_BALANCE_ENABLED_PREF_STRING),
+            )
+            val micProcessingFlags = MicVolumeProcessingPolicy.flagsFor(micProcessingMode)
+            config.micVolumeProcessingEnabled = micProcessingFlags.processing
+            config.micGainEnabled = micProcessingFlags.gain
+            config.micGainDb = prefs.getInt(MIC_GAIN_DB_PREF_STRING, DEFAULT_MIC_GAIN_DB).coerceIn(-20, 20)
+            config.micBalanceEnabled = micProcessingFlags.balance
+            config.micBalanceTargetPercent = prefs.getInt(MIC_BALANCE_TARGET_PERCENT_PREF_STRING, DEFAULT_MIC_BALANCE_TARGET_PERCENT).coerceIn(1, 100)
+            config.micVoiceEnhancementEnabled = prefs.getBoolean(MIC_VOICE_ENHANCEMENT_PREF_STRING, DEFAULT_MIC_VOICE_ENHANCEMENT)
 
             // 读取ESC菜单设置
             config.enableEscMenu = prefs.getBoolean(ENABLE_ESC_MENU_PREF_STRING, DEFAULT_ENABLE_ESC_MENU)
@@ -1317,7 +1625,7 @@ class PreferenceConfiguration {
             config.screenOffsetX = prefs.getInt(SCREEN_OFFSET_X_PREF_STRING, DEFAULT_SCREEN_OFFSET_X)
             config.screenOffsetY = prefs.getInt(SCREEN_OFFSET_Y_PREF_STRING, DEFAULT_SCREEN_OFFSET_Y)
 
-            config.useExternalDisplay = prefs.getBoolean("use_external_display", false)
+            config.useExternalDisplay = prefs.getBoolean(USE_EXTERNAL_DISPLAY_PREF_STRING, false)
 
             // 读取悬浮球设置
             config.enableFloatBall = prefs.getBoolean(ENABLE_FLOAT_BALL_PREF_STRING, DEFAULT_ENABLE_FLOAT_BALL)
@@ -1331,11 +1639,6 @@ class PreferenceConfiguration {
             config.floatBallSwipeDownAction = prefs.getString(FLOAT_BALL_SWIPE_DOWN_ACTION_PREF_STRING, DEFAULT_FLOAT_BALL_SWIPE_DOWN_ACTION) ?: DEFAULT_FLOAT_BALL_SWIPE_DOWN_ACTION
             config.floatBallSwipeLeftAction = prefs.getString(FLOAT_BALL_SWIPE_LEFT_ACTION_PREF_STRING, DEFAULT_FLOAT_BALL_SWIPE_LEFT_ACTION) ?: DEFAULT_FLOAT_BALL_SWIPE_LEFT_ACTION
             config.floatBallSwipeRightAction = prefs.getString(FLOAT_BALL_SWIPE_RIGHT_ACTION_PREF_STRING, DEFAULT_FLOAT_BALL_SWIPE_RIGHT_ACTION) ?: DEFAULT_FLOAT_BALL_SWIPE_RIGHT_ACTION
-
-            // Runtime-only defaults; controlled via in-stream GameMenu
-            config.gyroToRightStick = false
-            config.gyroToMouse = false
-            config.gyroFullDeflectionDps = 180.0f
 
             return config
         }
