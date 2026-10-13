@@ -478,6 +478,6 @@
             android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/phc_action_exit"
-            android:tint="@color/crown_text_primary" />
+            app:tint="@color/crown_text_primary" />
     </LinearLayout>
 </com.limelight.binding.input.advance_setting.superpage.SuperPageLayout>
